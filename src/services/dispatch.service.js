@@ -1,11 +1,14 @@
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
 const { Op } = require('sequelize');
 const models = require('../models');
 const wsapi = require('./wsapi_client');
 const media = require('./media.service');
 const config = require('../config/env');
 const logger = require('../utils/logger');
+const { uploadDir } = require('./upload.service');
 
 const { PostSchedule, WhatsAppInstance, MediaAsset } = models;
 
@@ -21,14 +24,26 @@ function sleep(ms) {
 
 /**
  * Single place that builds the WSAPI `/status/{type}` payload.
- * BLOCKER (§10): exact body fields for /status/image and /status/video are not
- * confirmed yet — adjust this function when the OpenAPI spec is available,
- * without touching the dispatch logic.
+ * Spec: `/status/image` & `/status/video` take base64 `data` (or `url`) plus
+ * optional `caption` and `mimeType`; `/status/text` takes `text`.
+ *
+ * We ship base64 `data` so the WSAPI never has to reach back to `PUBLIC_BASE_URL`
+ * (works when the backend is behind NAT / local during dev). The file is read
+ * straight off disk (uploads/<name>) and encoded.
  */
-function buildStatusPayload(post, asset) {
+async function buildStatusPayload(post, asset) {
   if (post.type === 'text') return { text: post.content };
-  const mediaUrl = asset ? media.absoluteUrl(asset.storagePath) : null;
-  return { caption: post.content, media_url: mediaUrl };
+
+  const mimeType = (asset && asset.mimeType) || 'image/webp';
+  const data = await media.base64FromStorage(asset && asset.storagePath);
+
+  if (!data) {
+    const err = new Error(`Could not read media file for post #${post.id}`);
+    err.code = 'NO_MEDIA';
+    throw err;
+  }
+
+  return { caption: post.content, data, mimeType };
 }
 
 function extractStatusId(result) {
@@ -57,7 +72,7 @@ async function dispatchOne(post) {
     throw err;
   }
 
-  const payload = buildStatusPayload(post, post.mediaAsset);
+  const payload = await buildStatusPayload(post, post.mediaAsset);
   const result = await wsapi.sendStatus(instance, post.type, payload);
 
   post.status = 'sent';

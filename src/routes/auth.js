@@ -8,8 +8,14 @@ const router = Router();
 
 router.post(
   '/register',
-  requireFields(['business_name', 'owner_phone']),
+  requireFields(['name', 'owner_phone', 'password']),
   authController.register
+);
+
+router.post(
+  '/login',
+  requireFields(['owner_phone', 'password']),
+  authController.login
 );
 
 module.exports = router;

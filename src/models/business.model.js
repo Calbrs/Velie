@@ -7,9 +7,13 @@ const Business = sequelize.define(
   'Business',
   {
     id: { type: DataTypes.INTEGER.UNSIGNED, primaryKey: true, autoIncrement: true },
+    /** User's display name (person, not the business entity). */
+    name: { type: DataTypes.STRING(120), allowNull: true },
+    /** Kept for backward compatibility with the original schema. */
     businessName: { type: DataTypes.STRING(120), allowNull: false },
     ownerPhone: { type: DataTypes.STRING(20), allowNull: false, unique: true },
     accessToken: { type: DataTypes.STRING(64), allowNull: false, unique: true },
+    passwordHash: { type: DataTypes.STRING(255), allowNull: true },
     plan: {
       type: DataTypes.ENUM('free', 'pro', 'business'),
       allowNull: false,
