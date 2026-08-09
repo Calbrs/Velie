@@ -20,6 +20,12 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use('/uploads', express.static(uploadDir));
 
+// Lightweight uptime endpoint for Render health checks / cron-job.org keep-alive.
+// Must respond 200 — no heavy logic needed to keep a free Render service awake.
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', ts: new Date().toISOString() });
+});
+
 app.use('/api', routes);
 
 app.use(notFoundHandler);
