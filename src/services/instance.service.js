@@ -2,98 +2,107 @@
 
 const { WhatsAppInstance } = require('../models');
 const wsapi = require('./wsapi_client');
+const { encrypt } = require('../utils/cipher');
 const { randomBytes } = require('../utils/token');
 const HttpError = require('../utils/HttpError');
 const logger = require('../utils/logger');
 
-function randomInstanceKey(businessId) {
-  return randomBytes(`velie_${businessId}`, 8);
+function randomWsInstanceId(userId) {
+  return randomBytes(`inst_${userId}`, 6);
 }
 
 /**
- * Multi-Instance Mode guard: a business reuses an existing instance that is
- * still 'pending' or 'connected' instead of creating a duplicate.
+ * Per-user instance resolver. A user may only ever act on instances they own
+ * (`userId = req.user.id`) — this is the ownership boundary that prevents
+ * cross-account instance access.
  */
-async function getOrCreateForBusiness(business) {
-  const existing = await WhatsAppInstance.findOne({
-    where: { businessId: business.id, status: ['pending', 'connected'] },
-    order: [['createdAt', 'DESC']],
-  });
-  if (existing) return existing;
-
-  let wsResponse;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const instanceKey = randomInstanceKey(business.id);
-    try {
-      wsResponse = await wsapi.createInstance(instanceKey);
-    } catch (err) {
-      logger.warn(`WSAPI create instance attempt ${attempt + 1} failed: ${err.message}`);
-      if (attempt === 2) throw new HttpError(502, 'Failed to reach WSAPI while creating the instance');
-      continue;
-    }
-
-    try {
-      return await WhatsAppInstance.create({
-        businessId: business.id,
-        instanceKey: wsResponse.instanceKey || instanceKey,
-        status: 'pending',
-        pairingCode: wsResponse.pairingCode || null,
-        pairingCodeExpiresAt: normalizeDate(wsResponse.expiresAt),
-      });
-    } catch (err) {
-      if (err.name === 'SequelizeUniqueConstraintError') {
-        logger.warn(`Instance key collision, retrying: ${err.message}`);
-        continue;
-      }
-      throw err;
-    }
-  }
-
-  throw new HttpError(409, 'Could not create a unique WhatsApp instance');
-}
-
-async function getForBusiness(business, instanceId) {
+async function getForUser(user, instanceId) {
   const id = Number(instanceId);
   if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, 'Invalid instance id');
   const instance = await WhatsAppInstance.findOne({
-    where: { id, businessId: business.id },
+    where: { id, userId: user.id },
   });
-  if (!instance) throw new HttpError(404, 'Instance not found');
+  if (!instance) throw new HttpError(404, 'Instance haipo au sio yako');
   return instance;
 }
 
-async function refreshPairingCode(business, instanceId) {
-  const instance = await getForBusiness(business, instanceId);
-if (instance.status === 'connected') {
-  throw new HttpError(409, 'Instance tayari imeunganishwa (connected)');
+/**
+ * Create OR reuse a pending/connected instance for the user (no duplicate
+ * instances per user) and obtain its pairing code from WSAPI.
+ */
+async function getOrCreateForUser(user) {
+  const existing = await WhatsAppInstance.findOne({
+    where: { userId: user.id, status: ['pending', 'connected'] },
+    order: [['createdAt', 'DESC']],
+  });
+  if (existing) {
+    if (!existing.pairingCode || pairingExpired(existing)) {
+      return refreshPairingCode(user, existing.id);
+    }
+    return existing;
+  }
+
+  let created;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const res = await wsapi.createInstance();
+      const wsId = res.instanceId || randomWsInstanceId(user.id);
+
+      const apiKeyEncrypted = encrypt(res.apiKey);
+      created = await WhatsAppInstance.create({
+        userId: user.id,
+        wsapiInstanceId: wsId,
+        wsapiApiKey: apiKeyEncrypted,
+        status: 'pending',
+        pairingCode: res.pairingCode || null,
+        pairingCodeExpiresAt: normalizeDate(res.expiresAt),
+      });
+      return created;
+    } catch (err) {
+      if (err.name === 'SequelizeUniqueConstraintError') {
+        logger.warn(`WSAPI instance id collision, retrying: ${err.message}`);
+        continue;
+      }
+      logger.error(`Failed to create WSAPI instance for user ${user.id}: ${err.message}`);
+      throw new HttpError(502, 'Failed to create WhatsApp instance on WSAPI');
+    }
+  }
+
+  throw new HttpError(409, 'Could not mint a unique WSAPI instance');
 }
 
-  let wsResponse;
+async function refreshPairingCode(user, instanceId) {
+  const instance = await getForUser(user, instanceId);
+  if (instance.status === 'connected') {
+    throw new HttpError(422, 'Instance tayari imeunganishwa (connected)');
+  }
+
+  let res;
   try {
-    wsResponse = await wsapi.requestPairingCode(instance.instanceKey);
+    res = await wsapi.requestPairingCode(instance);
   } catch (err) {
-    logger.error(`WSAPI pairing-code refresh failed for ${instance.instanceKey}: ${err.message}`);
-    throw new HttpError(502, 'Failed to refresh pairing code');
+    logger.error(`Pairing-code refresh failed for ${instance.wsapiInstanceId}: ${err.message}`);
+    throw new HttpError(502, 'Failed to refresh pairing code from WSAPI');
   }
 
   const now = new Date();
-  const expires = normalizeDate(wsResponse.expiresAt) || new Date(now.getTime() + 3 * 60 * 1000);
-
   instance.status = 'pending';
-  instance.pairingCode = wsResponse.pairingCode || null;
-  instance.pairingCodeExpiresAt = expires;
+  instance.pairingCode = res.pairingCode || null;
+  instance.pairingCodeExpiresAt = normalizeDate(res.expiresAt) || new Date(now.getTime() + 3 * 60 * 1000);
   await instance.save();
-
   return instance;
 }
 
-async function disconnect(business, instanceId) {
-  const instance = await getForBusiness(business, instanceId);
-
+/**
+ * Disconnect an instance (WSAPI logout) and mark it disconnected.
+ * The user can only disconnect an instance they own.
+ */
+async function disconnect(user, instanceId) {
+  const instance = await getForUser(user, instanceId);
   try {
-    await wsapi.disconnectInstance(instance.instanceKey);
+    await wsapi.disconnectInstance(instance);
   } catch (err) {
-    logger.warn(`WSAPI disconnect failed for ${instance.instanceKey}: ${err.message}`);
+    logger.warn(`WS disconnect failed for ${instance.wsapiInstanceId}: ${err.message}`);
   }
 
   instance.status = 'disconnected';
@@ -101,17 +110,19 @@ async function disconnect(business, instanceId) {
   instance.pairingCodeExpiresAt = null;
   instance.connectedAt = null;
   await instance.save();
-
   return instance;
 }
 
-/** Reconcile pairing code expiry from a webhook / client event. */
-async function markPairingExpired(business, instanceId) {
-  const instance = await getForBusiness(business, instanceId);
+async function markPairingExpired(user, instanceId) {
+  const instance = await getForUser(user, instanceId);
   instance.pairingCode = null;
   instance.pairingCodeExpiresAt = null;
   await instance.save();
   return instance;
+}
+
+function pairingExpired(instance) {
+  return !instance.pairingCodeExpiresAt || new Date(instance.pairingCodeExpiresAt) < new Date();
 }
 
 function normalizeDate(value) {
@@ -121,10 +132,11 @@ function normalizeDate(value) {
 }
 
 module.exports = {
-  getOrCreateForBusiness,
-  getForBusiness,
+  getOrCreateForUser,
+  getForUser,
   refreshPairingCode,
   disconnect,
   markPairingExpired,
-  randomInstanceKey,
+  randomWsInstanceId,
+  pairingExpired,
 };

@@ -9,12 +9,35 @@ const { WebhookEvent, WhatsAppInstance } = models;
 
 const SIGNATURE_HEADER = 'x-wsapi-signature';
 const EVENT_HANDLERS = {
-  pairing_success: async (instance, payload) => {
+  pairing_success: async (instance) => {
     instance.status = 'connected';
     instance.connectedAt = new Date();
     instance.pairingCode = null;
     instance.pairingCodeExpiresAt = null;
     await instance.save();
+  },
+  pairing_status_update: async (instance, payload) => {
+    if (payload.status === 'connected' && instance.status !== 'connected') {
+      instance.status = 'connected';
+      instance.connectedAt = new Date();
+      instance.pairingCode = null;
+      instance.pairingCodeExpiresAt = null;
+      await instance.save();
+    }
+  },
+  status_update: async (instance, payload) => {
+    const map = { connected: 'connected', disconnected: 'disconnected', pending: 'pending' };
+    const next = map[payload.status || payload.state];
+    if (next && next !== instance.status) {
+      instance.status = next;
+      if (next === 'connected') instance.connectedAt = new Date();
+      if (next === 'disconnected') {
+        instance.connectedAt = null;
+        instance.pairingCode = null;
+        instance.pairingCodeExpiresAt = null;
+      }
+      await instance.save();
+    }
   },
   disconnected: async (instance) => {
     instance.status = 'disconnected';
@@ -29,7 +52,7 @@ const EVENT_HANDLERS = {
     await instance.save();
   },
   message_ack: async () => {
-    // Optional: cross-reference posts_schedule by message id for extra "sent" evidence (Phase 2)
+    // Optional: tie an ack back to scheduled_posts by WS message id (Phase 2)
   },
 };
 
@@ -49,11 +72,12 @@ function verifySignature(req) {
   }
 }
 
-function findInstanceKey(payload) {
-  return payload.instanceKey
-    || payload.instance_key
-    || payload.key
-    || (payload.data && (payload.data.instanceKey || payload.data.instance_key))
+function findWsInstanceId(payload) {
+  return payload.wsapiInstanceId
+    || payload.wsapi_instance_id
+    || payload.instanceId
+    || payload.instance_id
+    || (payload.data && (payload.data.instanceId || payload.data.instance_id))
     || null;
 }
 
@@ -61,24 +85,25 @@ async function handleWebhook(req, res, next) {
   try {
     verifySignature(req);
     const payload = req.body || {};
+    const eventType = String(payload.event_type || payload.eventType || 'unknown');
 
-    const instanceKey = findInstanceKey(payload);
+    const wsId = findWsInstanceId(payload);
     let instance = null;
-    if (instanceKey) {
-      instance = await WhatsAppInstance.findOne({ where: { instanceKey } });
+    if (wsId) {
+      instance = await WhatsAppInstance.findOne({ where: { wsapiInstanceId: wsId } });
     }
 
     await WebhookEvent.create({
       instanceId: instance ? instance.id : null,
-      eventType: String(payload.event_type || payload.eventType || 'unknown'),
+      eventType,
       payload,
     });
 
-    if (instance && EVENT_HANDLERS[payload.event_type]) {
-      const handler = EVENT_HANDLERS[payload.event_type];
+    const handler = EVENT_HANDLERS[eventType];
+    if (instance && handler) {
       await handler(instance, payload);
     } else if (!instance) {
-      logger.warn(`Webhook: no instance found for key ${instanceKey}`);
+      logger.warn(`Webhook ${eventType}: no instance for id ${wsId}`);
     }
 
     return res.status(200).json({ received_at: new Date().toISOString() });
@@ -88,4 +113,4 @@ async function handleWebhook(req, res, next) {
   }
 }
 
-module.exports = { handleWebhook, findInstanceKey };
+module.exports = { handleWebhook, findWsInstanceId };

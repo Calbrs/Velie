@@ -1,16 +1,16 @@
 'use strict';
 
 const { sequelize } = require('../config/db');
-const Business = require('./business.model');
+const User = require('./user.model');
 const WhatsAppInstance = require('./whatsapp_instance.model');
-const PostSchedule = require('./post_schedule.model');
+const ScheduledPost = require('./scheduled_post.model');
 const WebhookEvent = require('./webhook_event.model');
 const SocialAccount = require('./social_account.model');
 
 const models = {
-  Business,
+  User,
   WhatsAppInstance,
-  PostSchedule,
+  ScheduledPost,
   WebhookEvent,
   SocialAccount,
 };

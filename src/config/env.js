@@ -31,6 +31,7 @@ const config = {
   wsapi: {
     baseUrl: read('WSAPI_BASE_URL', 'http://127.0.0.1:3001').replace(/\/$/, ''),
     adminKey: read('WSAPI_ADMIN_KEY', ''),
+    encryptionKey: read('WSAPI_KEY_ENCRYPTION_KEY', ''),
   },
   uploads: {
     dir: read('UPLOAD_DIR', './uploads'),

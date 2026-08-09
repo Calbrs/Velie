@@ -9,10 +9,10 @@ module.exports = {
         autoIncrement: true,
         allowNull: false,
       },
-      business_id: {
+      user_id: {
         type: Sequelize.DataTypes.INTEGER.UNSIGNED,
         allowNull: false,
-        references: { model: 'businesses', key: 'id' },
+        references: { model: 'users', key: 'id' },
         onUpdate: 'CASCADE',
         onDelete: 'CASCADE',
       },

@@ -8,7 +8,7 @@ const router = Router();
 
 router.post(
   '/register',
-  requireFields(['business_name', 'owner_phone']),
+  requireFields(['name', 'email']),
   authController.register
 );
 

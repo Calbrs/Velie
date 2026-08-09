@@ -4,16 +4,12 @@ const instanceService = require('../services/instance.service');
 
 async function createOrGet(req, res, next) {
   try {
-    const instance = await instanceService.getOrCreateForBusiness(req.business);
-
-    const status = instance.status === 'pending' && instance.pairingCode
-      ? 'pending'
-      : instance.status;
+    const instance = await instanceService.getOrCreateForUser(req.user);
 
     return res.status(201).json({
       id: instance.id,
-      instance_key: instance.instanceKey,
-      status,
+      wsapi_instance_id: instance.wsapiInstanceId,
+      status: instance.status,
       pairing_code: instance.pairingCode,
       pairing_code_expires_at: instance.pairingCodeExpiresAt,
     });
@@ -24,10 +20,10 @@ async function createOrGet(req, res, next) {
 
 async function getStatus(req, res, next) {
   try {
-    const instance = await instanceService.getForBusiness(req.business, req.params.id);
+    const instance = await instanceService.getForUser(req.user, req.params.id);
     return res.json({
       id: instance.id,
-      instance_key: instance.instanceKey,
+      wsapi_instance_id: instance.wsapiInstanceId,
       status: instance.status,
       pairing_code: instance.pairingCode,
       pairing_code_expires_at: instance.pairingCodeExpiresAt,
@@ -40,10 +36,10 @@ async function getStatus(req, res, next) {
 
 async function refreshPairingCode(req, res, next) {
   try {
-    const instance = await instanceService.refreshPairingCode(req.business, req.params.id);
+    const instance = await instanceService.refreshPairingCode(req.user, req.params.id);
     return res.json({
       id: instance.id,
-      instance_key: instance.instanceKey,
+      wsapi_instance_id: instance.wsapiInstanceId,
       status: instance.status,
       pairing_code: instance.pairingCode,
       pairing_code_expires_at: instance.pairingCodeExpiresAt,
@@ -55,10 +51,10 @@ async function refreshPairingCode(req, res, next) {
 
 async function disconnect(req, res, next) {
   try {
-    const instance = await instanceService.disconnect(req.business, req.params.id);
+    const instance = await instanceService.disconnect(req.user, req.params.id);
     return res.json({
       id: instance.id,
-      instance_key: instance.instanceKey,
+      wsapi_instance_id: instance.wsapiInstanceId,
       status: instance.status,
     });
   } catch (err) {

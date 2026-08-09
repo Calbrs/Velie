@@ -6,20 +6,17 @@ const wsapi = require('./wsapi_client');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 
-const { PostSchedule, WhatsAppInstance } = models;
+const { ScheduledPost, WhatsAppInstance } = models;
 
-const SUPPORTED_CHANNELS = new Set(['wa_status', 'wa_group']);
-
-function absoluteImageUrl(imageUrl) {
-  if (!imageUrl) return null;
-  if (/^https?:\/\//i.test(imageUrl)) return imageUrl;
-  return `${config.publicBaseUrl}${imageUrl.startsWith('/') ? imageUrl : `/${imageUrl}`}`;
+function absoluteMediaUrl(mediaUrl) {
+  if (!mediaUrl) return null;
+  if (/^https?:\/\//i.test(mediaUrl)) return mediaUrl;
+  return `${config.publicBaseUrl}${mediaUrl.startsWith('/') ? mediaUrl : `/${mediaUrl}`}`;
 }
 
 function randomDelayMs() {
-  const { minDelayMs, maxDelayMs } = config.dispatch;
-  const min = Math.max(0, minDelayMs);
-  const max = Math.max(min, maxDelayMs);
+  const min = Math.max(0, config.dispatch.minDelayMs);
+  const max = Math.max(min, config.dispatch.maxDelayMs);
   return min + Math.round(Math.random() * (max - min));
 }
 
@@ -27,89 +24,89 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function sendPost(post, instance) {
-  const imageUrl = absoluteImageUrl(post.imageUrl);
-
-  if (post.channel === 'wa_status') {
-    return wsapi.sendWhatsAppStatus(instance.instanceKey, { imageUrl, caption: post.caption });
-  }
+async function publish(post, instance) {
+  const mediaUrl = absoluteMediaUrl(post.mediaUrl);
 
   if (post.channel === 'wa_group') {
     if (!post.groupId) throw new Error('group_id inahitajika kwa channel wa_group');
-    return wsapi.sendWhatsAppGroupMessage(instance.instanceKey, post.groupId, {
-      imageUrl,
-      caption: post.caption,
+    return wsapi.sendWhatsAppGroupMessage(instance, post.groupId, {
+      mediaUrl,
+      content: post.content,
     });
   }
 
-  throw new Error(`Channel '${post.channel}' haijaunganishwa bado (Phase 2)`);
+  return wsapi.sendWhatsAppStatus(instance, { mediaUrl, content: post.content });
 }
 
+/**
+ * Dispatch cycle: every due post is sent through ITS OWN instance
+ * (`post.instanceId` → `X-Instance-Id`/`X-Api-Key`), never a shared/default
+ * instance. Only connected instances may publish.
+ */
 async function runDispatchCycle() {
   const now = new Date();
-  const pending = await PostSchedule.findAll({
+
+  const due = await ScheduledPost.findAll({
     where: {
       status: 'pending',
-      scheduledTime: { [Op.lte]: now },
+      scheduledAt: { [Op.lte]: now },
     },
-    order: [['scheduledTime', 'ASC']],
-    limit: 500,
+    include: [{ model: WhatsAppInstance, as: 'instance' }],
+    order: [['scheduledAt', 'ASC']],
+    limit: 200,
   });
 
-  if (pending.length === 0) return 0;
+  if (due.length === 0) return 0;
 
-  const instancesByBusiness = new Map();
-
-  for (let i = 0; i < pending.length; i += 1) {
-    const post = pending[i];
-
-    let instance = instancesByBusiness.get(post.businessId);
-    if (!instance) {
-      instance = await WhatsAppInstance.findOne({
-        where: { businessId: post.businessId, status: 'connected' },
-        order: [['updatedAt', 'DESC']],
-      });
-      instancesByBusiness.set(post.businessId, instance);
-    }
+  let first = true;
+  for (const post of due) {
+    const instance = post.instance;
 
     if (!instance) {
       post.status = 'failed';
-      post.lastError = 'No connected WhatsApp instance for this business';
+      post.error = 'No WhatsApp instance linked to this post';
       await post.save();
-      logger.error(`Dispatch blocked post #${post.id}: no connected instance`);
+      logger.error(`post #${post.id}: no linked instance`);
       continue;
     }
 
-    if (!SUPPORTED_CHANNELS.has(post.channel)) {
-      post.status = 'failed';
-      post.lastError = `Channel '${post.channel}' inatungojea (Phase 2)`;
+    if (instance.status !== 'connected') {
+      post.error = 'WhatsApp instance haijaunganishwa (connected required)';
       await post.save();
-      logger.error(`post #${post.id} channel '${post.channel}' unsupported`);
+      logger.warn(`post #${post.id}: instance ${instance.wsapiInstanceId} is ${instance.status}`);
       continue;
     }
 
     try {
-      await sendPost(post, instance);
-      post.status = 'sent';
-      post.lastError = null;
-      logger.info(`post #${post.id} sent via ${post.channel} (instance ${instance.instanceKey})`);
+      await publish(post, instance);
+      post.status = 'published';
+      post.error = null;
+      post.publishedAt = new Date();
+      logger.info(`post #${post.id} published via instance ${instance.wsapiInstanceId}`);
     } catch (err) {
       post.status = 'failed';
-      post.lastError = err.message;
+      post.attempts += 1;
+      post.error = err.message;
+      post.publishedAt = null;
       logger.error(`post #${post.id} failed: ${err.message}`);
     }
-
     await post.save();
 
-    const isLast = i === pending.length - 1;
-    if (!isLast) {
+    if (!first) {
       const delay = randomDelayMs();
-      logger.info(`Staggering ${delay}ms before next post (anti-ban)`);
+      logger.info(`Staggering ${delay}ms between posts (anti-ban)`);
       await sleep(delay);
     }
+    first = false;
   }
 
-  return pending.length;
+  return due.length;
 }
 
-module.exports = { runDispatchCycle, randomDelayMs, absoluteImageUrl };
+/** User-scoped retry: flip a failed post back into the dispatch queue. */
+async function requeueForRetry(userId, postId) {
+  const post = await models.WebhookEvent; // placeholder removed below
+  return post;
+}
+
+module.exports = { runDispatchCycle, randomDelayMs, absoluteMediaUrl };

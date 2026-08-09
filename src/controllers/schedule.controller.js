@@ -1,81 +1,112 @@
 'use strict';
 
-const { PostSchedule } = require('../models');
+const { ScheduledPost, WhatsAppInstance } = require('../models');
 const { imageUrlFromFile, deleteImageFile } = require('../services/upload.service');
+const wsapi = require('../services/wsapi_client');
+const { parseScheduledAt } = require('../utils/timezone');
 const HttpError = require('../utils/HttpError');
+const logger = require('../utils/logger');
 
-const CHANNELS = new Set(['wa_status', 'wa_group', 'ig', 'fb', 'tiktok']);
-const EDITABLE_STATUS = new Set(['pending']);
+const CHANNELS = new Set(['wa_status', 'wa_group']);
+const DEFAULT_TIMEZONE = 'Africa/Dar_es_Salaam';
+const STATUSES = new Set(['pending', 'published', 'failed']);
 
-function serialize(post) {
+function serialize(post, instance = null) {
   return {
     id: post.id,
-    business_id: post.businessId,
-    image_url: post.imageUrl,
-    caption: post.caption,
+    user_id: post.userId,
+    instance_id: post.instanceId,
+    wsapi_instance_id: instance ? instance.wsapiInstanceId : null,
+    type: post.type,
+    media_url: post.mediaUrl,
+    content: post.content,
+    caption: post.content, // alias, backward-compatible with the Flutter app
+    image_url: post.mediaUrl, // alias, backward-compatible with the Flutter app
     channel: post.channel,
     group_id: post.groupId,
-    scheduled_time: post.scheduledTime,
+    scheduled_at: post.scheduledAt,
+    timezone: post.timezone,
     status: post.status,
-    retries: post.retries,
-    last_error: post.lastError,
+    attempts: post.attempts,
+    error: post.error,
+    published_at: post.publishedAt,
     created_at: post.createdAt,
     updated_at: post.updatedAt,
   };
+}
+
+async function resolveInstance(userId, requestedId) {
+  if (requestedId !== undefined && requestedId !== '') {
+    const id = Number(requestedId);
+    const instance = await WhatsAppInstance.findOne({ where: { id, userId } });
+    if (!instance) throw new HttpError(404, 'Instance haipo au sio yako');
+    return instance;
+  }
+  const instance = await WhatsAppInstance.findOne({
+    where: { userId, status: ['connected', 'pending'] },
+    order: [['id', 'DESC']],
+  });
+  if (!instance) throw new HttpError(409, 'Unganisha WhatsApp kwanza (hakuna instance)');
+  return instance;
 }
 
 async function create(req, res, next) {
   try {
     if (!req.file) throw new HttpError(400, 'Picha inahitajika (multipart field: image)');
 
-    const { caption, channel, group_id: groupId, scheduled_time: scheduledTime } = req.body;
+    const {
+      content,
+      channel = 'wa_status',
+      group_id: groupId,
+      scheduled_at: scheduledAt,
+      timezone = DEFAULT_TIMEZONE,
+      instance_id: instanceId,
+    } = req.body;
 
-    if (!caption || String(caption).trim() === '') throw new HttpError(400, 'caption inahitajika');
-    if (!channel || !CHANNELS.has(channel)) {
-      throw new HttpError(400, `channel batili (inapaswa kuwa: ${[...CHANNELS].join(', ')})`);
-    }
-    if (channel === 'wa_group' && !groupId) {
-      throw new HttpError(400, 'group_id inahitajika wakati channel = wa_group');
-    }
-    if (!scheduledTime || Number.isNaN(Date.parse(scheduledTime))) {
-      throw new HttpError(400, 'scheduled_time sahihi inahitajika (ISO date)');
-    }
+    if (!content || String(content).trim() === '') throw new HttpError(400, 'content inahitajika');
+    if (!CHANNELS.has(channel)) throw new HttpError(400, `channel batili (${[...CHANNELS].join(', ')})`);
+    if (channel === 'wa_group' && !groupId) throw new HttpError(400, 'group_id inahitajika kwa wa_group');
 
-    const post = await PostSchedule.create({
-      businessId: req.business.id,
-      imageUrl: imageUrlFromFile(req.file),
-      caption: String(caption),
+    const instance = await resolveInstance(req.user.id, instanceId);
+
+    const post = await ScheduledPost.create({
+      userId: req.user.id,
+      instanceId: instance.id,
+      mediaUrl: imageUrlFromFile(req.file),
+      content: String(content),
+      type: 'image',
       channel,
       groupId: channel === 'wa_group' ? String(groupId) : null,
-      scheduledTime: new Date(scheduledTime),
+      scheduledAt: parseScheduledAt(scheduledAt, timezone),
+      timezone,
       status: 'pending',
-      retries: 0,
+      attempts: 0,
     });
 
-    return res.status(201).json(serialize(post));
+    return res.status(201).json(serialize(post, instance));
   } catch (err) {
-    if (err.name === 'HttpError' && req.file) deleteImageFile(imageUrlFromFile(req.file));
+    if (req.file) deleteImageFile(imageUrlFromFile(req.file));
     return next(err);
   }
 }
 
 async function list(req, res, next) {
   try {
-    const { status } = req.query;
-    const where = { businessId: req.business.id };
+    const { status, instance_id: instanceId } = req.query;
+    const where = { userId: req.user.id };
     if (status) {
-      if (!['pending', 'sent', 'failed'].includes(status)) {
-        throw new HttpError(400, 'status filter batili (pending|sent|failed)');
-      }
+      if (!STATUSES.has(status)) throw new HttpError(400, 'status filter batili (pending|published|failed)');
       where.status = status;
     }
+    if (instanceId) where.instanceId = Number(instanceId);
 
-    const posts = await PostSchedule.findAll({
+    const posts = await ScheduledPost.findAll({
       where,
-      order: [['scheduledTime', 'DESC']],
+      include: [{ model: WhatsAppInstance, as: 'instance' }],
+      order: [['scheduledAt', 'DESC']],
     });
 
-    return res.json({ posts: posts.map(serialize) });
+    return res.json({ posts: posts.map((p) => serialize(p, p.instance)) });
   } catch (err) {
     return next(err);
   }
@@ -83,11 +114,12 @@ async function list(req, res, next) {
 
 async function getOne(req, res, next) {
   try {
-    const post = await PostSchedule.findOne({
-      where: { id: Number(req.params.id), businessId: req.business.id },
+    const post = await ScheduledPost.findOne({
+      where: { id: Number(req.params.id), userId: req.user.id },
+      include: [{ model: WhatsAppInstance, as: 'instance' }],
     });
-    if (!post) throw new HttpError(404, 'Post haipo');
-    return res.json(serialize(post));
+    if (!post) throw new HttpError(404, 'Post haipo au sio yako');
+    return res.json(serialize(post, post.instance));
   } catch (err) {
     return next(err);
   }
@@ -95,62 +127,77 @@ async function getOne(req, res, next) {
 
 async function update(req, res, next) {
   try {
-    const post = await PostSchedule.findOne({
-      where: { id: Number(req.params.id), businessId: req.business.id },
-    });
-    if (!post) throw new HttpError(404, 'Post haipo');
-    if (!EDITABLE_STATUS.has(post.status)) {
+    const post = await findOwnedPost(req.user.id, req.params.id);
+    if (post.status !== 'pending') {
       throw new HttpError(409, 'Post inaweza kuhaririwa tu ikiwa status = pending');
     }
 
-    const { caption, channel, group_id: groupId, scheduled_time: scheduledTime } = req.body;
+    const {
+      content,
+      channel,
+      group_id: groupId,
+      scheduled_at: scheduledAt,
+      timezone = post.timezone,
+    } = req.body;
 
-    const nextCaption = caption !== undefined ? String(caption) : post.caption;
-    const nextChannel = channel !== undefined ? String(channel) : post.channel;
-
-    if (nextCaption.trim() === '') throw new HttpError(400, 'caption haiwezi kuwa tupu');
-    if (!CHANNELS.has(nextChannel)) throw new HttpError(400, 'channel batili');
-    if (nextChannel === 'wa_group' && groupId === undefined && !post.groupId) {
+    if (content !== undefined) {
+      if (String(content).trim() === '') throw new HttpError(400, 'content haiwezi kuwa tupu');
+      post.content = String(content);
+    }
+    if (channel !== undefined) {
+      if (!CHANNELS.has(channel)) throw new HttpError(400, 'channel batili');
+      post.channel = channel;
+    }
+    if ((post.channel === 'wa_group' && groupId !== undefined) || groupId !== undefined) {
+      post.groupId = groupId ? String(groupId) : null;
+    }
+    if (post.channel === 'wa_group' && !post.groupId) {
       throw new HttpError(400, 'group_id inahitajika wakati channel = wa_group');
     }
-    let nextScheduled = post.scheduledTime;
-    if (scheduledTime !== undefined) {
-      if (Number.isNaN(Date.parse(scheduledTime))) throw new HttpError(400, 'scheduled_time sahihi inahitajika');
-      nextScheduled = new Date(scheduledTime);
+    if (scheduledAt !== undefined) {
+      post.scheduledAt = parseScheduledAt(scheduledAt, timezone);
     }
+    if (timezone !== undefined) post.timezone = timezone;
 
-    let oldImageUrl = null;
     if (req.file) {
-      oldImageUrl = post.imageUrl;
-      post.imageUrl = imageUrlFromFile(req.file);
+      const old = post.mediaUrl;
+      post.mediaUrl = imageUrlFromFile(req.file);
+      deleteImageFile(old);
     }
-
-    post.caption = nextCaption;
-    post.channel = nextChannel;
-    post.groupId = nextChannel === 'wa_group' ? (groupId !== undefined ? String(groupId) : post.groupId) : null;
-    post.scheduledTime = nextScheduled;
 
     await post.save();
-    if (oldImageUrl) deleteImageFile(oldImageUrl);
-
     return res.json(serialize(post));
   } catch (err) {
-    if (err.name === 'HttpError' && req.file) deleteImageFile(imageUrlFromFile(req.file));
+    if (req.file) deleteImageFile(imageUrlFromFile(req.file));
     return next(err);
   }
 }
 
+/**
+ * Delete: ownership is verified (`user_id == req.user.id`) BEFORE touching the
+ * instance. Published posts are additionally removed from WSAPI through the
+ * OWNED instance (per-instance delete), so a user can never act through
+ * another user's instance.
+ */
 async function remove(req, res, next) {
   try {
-    const post = await PostSchedule.findOne({
-      where: { id: Number(req.params.id), businessId: req.business.id },
-    });
-    if (!post) throw new HttpError(404, 'Post haipo');
-    if (!EDITABLE_STATUS.has(post.status)) {
-      throw new HttpError(409, 'Post inaweza kufutwa tu ikiwa status = pending');
+    const post = await findOwnedPost(req.user.id, req.params.id);
+
+    if (post.status === 'published' && post.instanceId) {
+      const instance = await WhatsAppInstance.findOne({
+        where: { id: post.instanceId, userId: req.user.id },
+      });
+      if (instance) {
+        try {
+          await wsapi.deleteStatus(instance, { mediaUrl: post.mediaUrl });
+          logger.info(`post #${post.id} deleted from WSAPI via ${instance.wsapiInstanceId}`);
+        } catch (err) {
+          logger.warn(`WS delete failed for post #${post.id}: ${err.message}`);
+        }
+      }
     }
 
-    deleteImageFile(post.imageUrl);
+    deleteImageFile(post.mediaUrl);
     await post.destroy();
     return res.status(204).send();
   } catch (err) {
@@ -160,23 +207,25 @@ async function remove(req, res, next) {
 
 async function retry(req, res, next) {
   try {
-    const post = await PostSchedule.findOne({
-      where: { id: Number(req.params.id), businessId: req.business.id },
-    });
-    if (!post) throw new HttpError(404, 'Post haipo');
-    if (post.status !== 'failed') {
-      throw new HttpError(409, 'Retry inaruhusiwa tu kwa post zenye status = failed');
-    }
+    const post = await findOwnedPost(req.user.id, req.params.id);
+    if (post.status !== 'failed') throw new HttpError(409, 'Retry inafanyika tu kwa failed posts');
 
     post.status = 'pending';
-    post.retries += 1;
-    post.lastError = null;
+    post.attempts += 1;
+    post.error = null;
     await post.save();
-
     return res.json(serialize(post));
   } catch (err) {
     return next(err);
   }
 }
 
-module.exports = { create, list, getOne, update, remove, retry, serialize };
+async function findOwnedPost(userId, postId) {
+  const id = Number(postId);
+  if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, 'Invalid post id');
+  const post = await ScheduledPost.findOne({ where: { id, userId } });
+  if (!post) throw new HttpError(404, 'Post haipo au sio yako');
+  return post;
+}
+
+module.exports = { create, list, getOne, update, remove, retry, serialize, findOwnedPost };

@@ -9,7 +9,7 @@ let running = false;
 
 /**
  * Cron tick: grab posts whose scheduled_time has arrived and dispatch them
- * with the anti-ban stagger (30–60s between posts per business/instance).
+ * with the anti-ban stagger (30–60s between posts sent on the same instance).
  */
 async function tick() {
   if (running) return;
