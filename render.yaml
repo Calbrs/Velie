@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: velie
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 4000
+      - key: PUBLIC_BASE_URL
+        value: https://velie-f.onrender.com
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        sync: false
+      - key: DB_USER
+        sync: false
+      - key: DB_PASS
+        sync: false
+      - key: DB_NAME
+        sync: false
+      - key: DB_SSL
+        value: "true"
+      - key: WSAPI_BASE_URL
+        value: https://velie.onrender.com
+      - key: WSAPI_ADMIN_KEY
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: WEBHOOK_SECRET
+        sync: false
+      - key: DISPATCH_INTERVAL_CRON
+        value: "* * * * *"
+      - key: DISPATCH_MIN_DELAY_MS
+        value: "30000"
+      - key: DISPATCH_MAX_DELAY_MS
+        value: "60000"
+      - key: MEDIA_CLEANUP_CRON
+        value: "0 * * * *"
+      - key: MEDIA_RETENTION_HOURS
+        value: "24"
+      - key: MAX_IMAGE_SIZE_MB
+        value: "8"
