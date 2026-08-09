@@ -15,7 +15,8 @@ const app = express();
 
 app.disable('x-powered-by');
 app.use(cors());
-app.use(express.json({ limit: '2mb' }));
+// Keep the raw body so webhooks can verify HMAC-SHA256 (X-Webhook-Signature).
+app.use(express.json({ limit: '2mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use('/uploads', express.static(uploadDir));

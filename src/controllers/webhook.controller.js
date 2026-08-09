@@ -7,39 +7,53 @@ const logger = require('../utils/logger');
 
 const { WebhookEvent, WhatsAppInstance } = models;
 
-const SIGNATURE_HEADER = 'x-wsapi-signature';
+// Per WSAPI wiki: X-Webhook-Signature: sha256=<hex>, HMAC-SHA256 over the raw body.
+const SIGNATURE_HEADER = 'x-webhook-signature';
+
 const EVENT_HANDLERS = {
-  session_connected: async (instance) => {
+  logged_in: async (instance) => {
     instance.status = 'connected';
     instance.connectedAt = new Date();
     instance.pairingCode = null;
     instance.pairingCodeExpiresAt = null;
     await instance.save();
   },
-  session_disconnected: async (instance) => {
+  logged_out: async (instance) => {
     instance.status = 'disconnected';
     instance.connectedAt = null;
     instance.pairingCode = null;
     instance.pairingCodeExpiresAt = null;
     await instance.save();
   },
-  pairing_code_expired: async (instance) => {
+  login_error: async (instance) => {
+    instance.status = 'disconnected';
     instance.pairingCode = null;
     instance.pairingCodeExpiresAt = null;
     await instance.save();
   },
+  initial_sync_finished: async () => {
+    // Messages/history sync complete — nothing to persist here yet.
+  },
 };
 
-function signaturesMatch(a, b) {
-  const left = Buffer.from(String(a || ''));
-  const right = Buffer.from(String(b || ''));
-  if (left.length !== right.length) return false;
-  return crypto.timingSafeEqual(left, right);
-}
-
 function verifySignature(req) {
-  const received = req.headers[SIGNATURE_HEADER];
-  if (!config.webhookSecret || !received || !signaturesMatch(received, config.webhookSecret)) {
+  const received = String(req.headers[SIGNATURE_HEADER] || '');
+  const match = received.match(/^sha256=([0-9a-f]{64})$/i);
+  if (!config.webhookSecret || !match) {
+    const err = new Error('Invalid WSAPI webhook signature');
+    err.status = 401;
+    throw err;
+  }
+
+  const raw = req.rawBody || Buffer.from(JSON.stringify(req.body || {}), 'utf8');
+  const expected = crypto
+    .createHmac('sha256', config.webhookSecret)
+    .update(raw)
+    .digest('hex');
+
+  const left = Buffer.from(match[1].toLowerCase());
+  const right = Buffer.from(expected);
+  if (left.length !== right.length || !crypto.timingSafeEqual(left, right)) {
     const err = new Error('Invalid WSAPI webhook signature');
     err.status = 401;
     throw err;
@@ -47,10 +61,10 @@ function verifySignature(req) {
 }
 
 function findWsInstanceId(payload) {
-  return payload.wsapiInstanceId
-    || payload.wsapi_instance_id
-    || payload.instanceId
+  return payload.instanceId
     || payload.instance_id
+    || payload.wsapiInstanceId
+    || payload.wsapi_instance_id
     || (payload.data && (payload.data.instanceId || payload.data.instance_id))
     || null;
 }
@@ -59,7 +73,7 @@ async function handleWebhook(req, res, next) {
   try {
     verifySignature(req);
     const payload = req.body || {};
-    const eventType = String(payload.event_type || payload.eventType || 'unknown');
+    const eventType = String(payload.eventType || payload.event_type || 'unknown');
 
     const wsId = findWsInstanceId(payload);
     let instance = null;
@@ -75,7 +89,7 @@ async function handleWebhook(req, res, next) {
 
     const handler = EVENT_HANDLERS[eventType];
     if (instance && handler) {
-      await handler(instance, payload);
+      await handler(instance, payload.data || payload);
     } else if (!instance) {
       logger.warn(`Webhook ${eventType}: no instance for id ${wsId}`);
     }

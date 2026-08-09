@@ -5,9 +5,6 @@ const config = require('../config/env');
 const { decrypt } = require('./crypto.service');
 const logger = require('../utils/logger');
 
-const SESSION_PATH = '/session';
-const STATUS_PATH = '/status';
-
 const http = axios.create({
   baseURL: config.wsapi.baseUrl,
   timeout: 30000,
@@ -29,16 +26,19 @@ function assertOk(res) {
   return res;
 }
 
+/**
+ * Admin endpoints (/admin/instances/*) use the admin API key.
+ * Header is X-Api-Key = WSAPI_ADMIN_API_KEY (set on the WSAPI server).
+ */
 function adminHeaders() {
   const headers = {};
-  if (config.wsapi.adminKey) headers['X-WSAPI-Admin-Key'] = config.wsapi.adminKey;
+  if (config.wsapi.adminKey) headers['X-Api-Key'] = config.wsapi.adminKey;
   return headers;
 }
 
 /**
- * Per-instance identity: these two headers are what WSAPI uses to route a call
- * to the correct WhatsApp account. The api key is decrypted here and is never
- * available anywhere else in the request path.
+ * Instance endpoints require X-Instance-Id + X-Api-Key (the instance's own key,
+ * decrypted here — never available anywhere else in the request path).
  */
 function instanceHeaders(instance) {
   return {
@@ -47,90 +47,73 @@ function instanceHeaders(instance) {
   };
 }
 
-function normalizeCreate(payload) {
-  const p = payload && typeof payload === 'object' ? payload : {};
-  return {
-    instanceId: p.instanceId || p.instance_id || p.id || p.key || null,
-    apiKey: p.apiKey || p.api_key || p.token || null,
-    pairingCode: p.pairingCode || p.pairing_code || p.code || null,
-    expiresAt: p.pairingCodeExpiresAt || p.pairing_code_expires_at || p.expiration || p.expiresAt || null,
-  };
-}
-
 function normalizePairing(payload) {
   const p = payload && typeof payload === 'object' ? payload : {};
   return {
-    pairingCode: p.pairingCode || p.pairing_code || p.code || null,
-    expiresAt: p.pairingCodeExpiresAt || p.pairing_code_expires_at || p.expiration || p.expiresAt || null,
+    pairingCode: p.pairCode || p.pair_code || p.code || p.pairingCode || p.pairing_code || null,
+    expiresAt: p.expiresAt || p.expires_at || p.expiration || null,
   };
 }
 
-/* ---------------------------------- /session/* ----------------------------------
- * GAP (§10): exact paths for creating an instance and requesting a pairing code
- * are not yet confirmed by Ahmed. These are PLACEHOLDER paths using the generic
- * /session/* shape; adjust once the real spec is available.
- */
+/* ------------------------------ Admin: /admin/instances/* ------------------------------ */
 
-/** Create a new WhatsApp instance/session and obtain its pairing code. */
-async function createSession() {
-  let res;
-  try {
-    res = await http.post(`${SESSION_PATH}/create`, { use_pairing_code: true }, { headers: adminHeaders() });
-  } catch (err) {
-    logger.error(`WSAPI network error on createSession: ${err.message}`);
-    throw err;
-  }
+/**
+ * Create a new instance in Multi Mode. We supply the instance id, its own api key,
+ * the webhook URL (events) and the signing secret (HMAC) so events hit our
+ * /api/webhook/wsapi. The id/apiKey values we send are the ones that get stored.
+ */
+async function createInstance({ id, apiKey, webhookUrl, signingSecret }) {
+  const body = { id };
+  if (apiKey) body.apiKey = apiKey;
+  if (webhookUrl) body.webhookUrl = webhookUrl;
+  if (signingSecret) body.signingSecret = signingSecret;
+
+  const res = await http.post('/admin/instances', body, { headers: adminHeaders() });
   assertOk(res);
-  return normalizeCreate(unwrap(res.data));
+  return unwrap(res.data) || res.data;
 }
 
-/** Request a fresh pairing code for an existing instance. */
-async function requestPairingCode(instance) {
-  const res = await http.post(`${SESSION_PATH}/pairing-code`, null, { headers: instanceHeaders(instance) });
+/* --------------------------------- /session/* --------------------------------- */
+
+/** Get the pairing code for a phone number: GET /session/pair-code/{phone}. */
+async function requestPairingCode(instance, phone) {
+  const res = await http.get(`/session/pair-code/${encodeURIComponent(phone)}`, {
+    headers: instanceHeaders(instance),
+  });
   assertOk(res);
   return normalizePairing(unwrap(res.data));
 }
 
-/** Disconnect/logout the instance. */
-async function disconnectSession(instance) {
-  const res = await http.post(`${SESSION_PATH}/disconnect`, null, { headers: instanceHeaders(instance) });
-  assertOk(res);
-  return unwrap(res.data);
-}
-
 /** Connection/login status of the instance (NOT WhatsApp Status content). */
 async function getSessionStatus(instance) {
-  const res = await http.get(`${SESSION_PATH}/status`, { headers: instanceHeaders(instance) });
+  const res = await http.get('/session/status', { headers: instanceHeaders(instance) });
   assertOk(res);
   return unwrap(res.data);
 }
 
-/* ---------------------------------- /status/* ----------------------------------
- * WhatsApp Status endpoints (confirmed by Calbrs Ahmed).
+/** Logout/disconnect the WhatsApp session. */
+async function logout(instance) {
+  const res = await http.post('/session/logout', null, { headers: instanceHeaders(instance) });
+  assertOk(res);
+  return unwrap(res.data);
+}
+
+/* --------------------------------- /status/* ---------------------------------
+ * WhatsApp Status endpoints. Request body for /status/image and /status/video is
+ * still best confirmed from the OpenAPI spec — buildStatusPayload (dispatch.service)
+ * is the single place to adjust payload fields without touching logic elsewhere.
  */
 
-/**
- * Publish a WhatsApp Status. `type` is one of text|image|video.
- * NOTE (blocker §10): the request body shape for /status/image and /status/video
- * is NOT officially confirmed yet — buildStatusPayload in dispatch.service is the
- * single place to adjust it once the OpenAPI schema is available.
- */
+/** Publish a WhatsApp Status. `type` is one of text|image|video. */
 async function sendStatus(instance, type, payload) {
-  const res = await http.post(`${STATUS_PATH}/${type}`, payload, { headers: instanceHeaders(instance) });
+  const res = await http.post(`/status/${type}`, payload, { headers: instanceHeaders(instance) });
   assertOk(res);
   return unwrap(res.data);
 }
 
-/** List current statuses (get status info). */
-async function listStatuses(instance) {
-  const res = await http.get(STATUS_PATH, { headers: instanceHeaders(instance) });
-  assertOk(res);
-  return unwrap(res.data);
-}
-
-/** Delete a live WhatsApp Status by its WSAPI id. */
-async function deleteStatus(instance, statusId) {
-  const res = await http.delete(`${STATUS_PATH}/${encodeURIComponent(statusId)}`, {
+/** Delete a live status: POST /status/{messageId}/delete. */
+async function deleteStatus(instance, messageId) {
+  const res = await http.post(`/status/${encodeURIComponent(messageId)}/delete`, null, {
     headers: instanceHeaders(instance),
   });
   assertOk(res);
@@ -138,11 +121,10 @@ async function deleteStatus(instance, statusId) {
 }
 
 module.exports = {
-  createSession,
+  createInstance,
   requestPairingCode,
-  disconnectSession,
   getSessionStatus,
+  logout,
   sendStatus,
-  listStatuses,
   deleteStatus,
 };

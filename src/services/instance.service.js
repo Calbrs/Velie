@@ -3,12 +3,18 @@
 const { WhatsAppInstance } = require('../models');
 const wsapi = require('./wsapi_client');
 const { encrypt } = require('./crypto.service');
-const { randomBytes } = require('../utils/token');
+const { generateAccessToken, randomBytes } = require('../utils/token');
+const config = require('../config/env');
 const HttpError = require('../utils/HttpError');
 const logger = require('../utils/logger');
 
 function randomWsInstanceId(businessId) {
   return randomBytes(`inst_${businessId}`, 6);
+}
+
+/** Pair-code endpoints want the number as digits (no +/spaces). */
+function digitsOnly(phone) {
+  return String(phone || '').replace(/[^0-9]/g, '');
 }
 
 /**
@@ -27,7 +33,10 @@ async function getForBusiness(business, instanceId) {
 
 /**
  * Create OR reuse the business's instance (one per business in this phase).
- * The WSAPI api-key is encrypted before storage and is never returned anywhere.
+ * We mint the instance id + a per-instance api key and register it on WSAPI via
+ * the admin API (/admin/instances), pointing the webhook at our backend so
+ * logged_in/logged_out events reach us. The api key is encrypted before storage
+ * and is never returned anywhere.
  */
 async function getOrCreateForBusiness(business) {
   const existing = await WhatsAppInstance.findOne({
@@ -41,27 +50,38 @@ async function getOrCreateForBusiness(business) {
     return existing;
   }
 
+  const instanceId = randomWsInstanceId(business.id);
+  const apiKey = generateAccessToken(32);
+  const webhookUrl = `${config.publicBaseUrl}/api/webhook/wsapi`;
+  const signingSecret = config.webhookSecret || undefined;
+
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const res = await wsapi.createSession();
-      const wsId = res.instanceId || randomWsInstanceId(business.id);
+      await wsapi.createInstance({ id: instanceId, apiKey, webhookUrl, signingSecret });
 
-      return await WhatsAppInstance.create({
+      const instance = await WhatsAppInstance.create({
         businessId: business.id,
-        wsapiInstanceId: wsId,
-        wsapiApiKeyEncrypted: encrypt(res.apiKey)
-          ? Buffer.from(encrypt(res.apiKey), 'utf8')
-          : null,
+        wsapiInstanceId: instanceId,
+        wsapiApiKeyEncrypted: Buffer.from(encrypt(apiKey), 'utf8'),
         status: 'pending',
-        pairingCode: res.pairingCode || null,
-        pairingCodeExpiresAt: normalizeDate(res.expiresAt),
+        pairingCode: null,
+        pairingCodeExpiresAt: null,
       });
+
+      try {
+        return await refreshPairingCode(business, instance.id);
+      } catch (err) {
+        // Pair-code fetch failed but the instance exists — return it anyway so
+        // the frontend can call the refresh endpoint again.
+        logger.warn(`Instance ${instanceId} created but pairing code unavailable: ${err.message}`);
+        return instance;
+      }
     } catch (err) {
       if (err.name === 'SequelizeUniqueConstraintError') {
         logger.warn(`WSAPI instance id collision, retrying: ${err.message}`);
         continue;
       }
-      logger.error(`Failed to create WSAPI session for business ${business.id}: ${err.message}`);
+      logger.error(`Failed to create WSAPI instance for business ${business.id}: ${err.message}`);
       throw new HttpError(502, 'Failed to create WhatsApp instance on WSAPI');
     }
   }
@@ -75,9 +95,12 @@ async function refreshPairingCode(business, instanceId) {
     throw new HttpError(422, 'Instance tayari imeunganishwa (connected)');
   }
 
+  const phone = digitsOnly(business.ownerPhone);
+  if (!phone) throw new HttpError(400, 'owner_phone haipo kwenye business hii');
+
   let res;
   try {
-    res = await wsapi.requestPairingCode(instance);
+    res = await wsapi.requestPairingCode(instance, phone);
   } catch (err) {
     logger.error(`Pairing-code refresh failed for ${instance.wsapiInstanceId}: ${err.message}`);
     throw new HttpError(502, 'Failed to refresh pairing code from WSAPI');
@@ -94,9 +117,9 @@ async function refreshPairingCode(business, instanceId) {
 async function disconnect(business, instanceId) {
   const instance = await getForBusiness(business, instanceId);
   try {
-    await wsapi.disconnectSession(instance);
+    await wsapi.logout(instance);
   } catch (err) {
-    logger.warn(`WS disconnect failed for ${instance.wsapiInstanceId}: ${err.message}`);
+    logger.warn(`WS logout failed for ${instance.wsapiInstanceId}: ${err.message}`);
   }
 
   instance.status = 'disconnected';
