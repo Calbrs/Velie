@@ -75,9 +75,14 @@ async function createInstance({ id, apiKey, webhookUrl, signingSecret }) {
 
 /* --------------------------------- /session/* --------------------------------- */
 
-/** Get the pairing code for a phone number: GET /session/pair-code/{phone}. */
+/**
+ * Get the pairing code for a phone number: GET /session/pair-code/{phone}.
+ * The WSAPI validates the phone as a literal path segment starting with '+';
+ * URL-encoding '+' as %2B fails its phone check, so we send the '+' raw and
+ * only encode the rest of the path.
+ */
 async function requestPairingCode(instance, phone) {
-  const res = await http.get(`/session/pair-code/${encodeURIComponent(phone)}`, {
+  const res = await http.get(`/session/pair-code/${phone}`, {
     headers: instanceHeaders(instance),
   });
   assertOk(res);

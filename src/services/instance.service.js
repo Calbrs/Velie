@@ -12,9 +12,10 @@ function randomWsInstanceId(businessId) {
   return randomBytes(`inst_${businessId}`, 6);
 }
 
-/** Pair-code endpoints want the number as digits (no +/spaces). */
-function digitsOnly(phone) {
-  return String(phone || '').replace(/[^0-9]/g, '');
+/** Pair-code endpoints want the E.164 number: '+' followed by digits (no spaces/dashes). */
+function toE164(phone) {
+  const digits = String(phone || '').replace(/[^0-9]/g, '');
+  return digits ? `+${digits}` : '';
 }
 
 /**
@@ -95,7 +96,7 @@ async function refreshPairingCode(business, instanceId) {
     throw new HttpError(422, 'Instance tayari imeunganishwa (connected)');
   }
 
-  const phone = digitsOnly(business.ownerPhone);
+  const phone = toE164(business.ownerPhone);
   if (!phone) throw new HttpError(400, 'owner_phone haipo kwenye business hii');
 
   let res;
