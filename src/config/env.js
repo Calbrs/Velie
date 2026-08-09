@@ -27,6 +27,7 @@ const config = {
     user: read('DB_USER', 'root'),
     password: read('DB_PASS', ''),
     name: read('DB_NAME', 'velie_db'),
+    ssl: read('DB_SSL', 'false') === 'true',
   },
   wsapi: {
     baseUrl: read('WSAPI_BASE_URL', 'https://velie.onrender.com').replace(/\/$/, ''),

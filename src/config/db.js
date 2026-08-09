@@ -8,6 +8,9 @@ const sequelize = new Sequelize(config.db.name, config.db.user, config.db.passwo
   host: config.db.host,
   port: config.db.port,
   dialect: 'mysql',
+  dialectOptions: config.db.ssl
+    ? { ssl: { rejectUnauthorized: false } }
+    : {},
   pool: {
     max: 10,
     min: 0,
