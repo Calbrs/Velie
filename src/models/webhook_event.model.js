@@ -12,7 +12,7 @@ const WebhookEvent = sequelize.define(
     payload: { type: DataTypes.JSON, allowNull: false },
     receivedAt: { type: DataTypes.DATE, allowNull: false, defaultValue: DataTypes.NOW },
   },
-  { tableName: 'webhook_events', underscored: true, updatedAt: false }
+  { tableName: 'webhook_events', underscored: true, createdAt: false, updatedAt: false }
 );
 
 WebhookEvent.associate = (models) => {
