@@ -1,6 +1,6 @@
 'use strict';
 
-const { User } = require('../models');
+const { Business } = require('../models');
 
 function extractBearerToken(req) {
   const header = req.headers.authorization || '';
@@ -14,9 +14,9 @@ async function authenticate(req, res, next) {
   if (!token) return res.status(401).json({ message: 'Access token inahitajika' });
 
   try {
-    const user = await User.findOne({ where: { accessToken: token } });
-    if (!user) return res.status(401).json({ message: 'Access token batili' });
-    req.user = user;
+    const business = await Business.findOne({ where: { accessToken: token } });
+    if (!business) return res.status(401).json({ message: 'Access token batili' });
+    req.business = business;
     return next();
   } catch (err) {
     return next(err);

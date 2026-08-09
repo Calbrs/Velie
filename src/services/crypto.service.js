@@ -6,15 +6,15 @@ const config = require('../config/env');
 const ALGO = 'aes-256-gcm';
 
 function keyBytes() {
-  const secret = config.wsapi.encryptionKey;
-  if (!secret) throw new Error('WSAPI_KEY_ENCRYPTION_KEY haipo kwenye env');
+  const secret = config.encryptionKey;
+  if (!secret) throw new Error('ENCRYPTION_KEY haipo kwenye env');
   if (/^[0-9a-fA-F]{64}$/.test(secret)) return Buffer.from(secret, 'hex');
   return crypto.createHash('sha256').update(secret).digest();
 }
 
 /**
- * Encrypt a plaintext secret (e.g. per-instance WSAPI API key) with AES-256-GCM.
- * Format: "<ivHex>:<authTagHex>:<ciphertextHex>". Never return the plaintext to the frontend.
+ * Encrypt a plaintext secret (the per-instance WSAPI `X-Api-Key`) with AES-256-GCM.
+ * Returns "<ivHex>:<authTagHex>:<ciphertextHex>".
  */
 function encrypt(plaintext) {
   if (plaintext === undefined || plaintext === null) return null;
@@ -25,9 +25,15 @@ function encrypt(plaintext) {
   return `${iv.toString('hex')}:${tag.toString('hex')}:${encrypted.toString('hex')}`;
 }
 
+/**
+ * Decrypt a value produced by encrypt(). Accepts a string or a Buffer (as read
+ * from the VARBINARY column). Returns plaintext or null.
+ */
 function decrypt(payload) {
-  if (!payload) return null;
-  const [ivHex, tagHex, dataHex] = String(payload).split(':');
+  if (payload === undefined || payload === null || payload === '') return null;
+  const text = Buffer.isBuffer(payload) ? payload.toString('utf8') : String(payload);
+  const [ivHex, tagHex, dataHex] = text.split(':');
+  if (!ivHex || !tagHex || !dataHex) return null;
   const decipher = crypto.createDecipheriv(ALGO, keyBytes(), Buffer.from(ivHex, 'hex'));
   decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
   return Buffer.concat([decipher.update(Buffer.from(dataHex, 'hex')), decipher.final()]).toString('utf8');

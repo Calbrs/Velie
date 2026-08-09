@@ -1,63 +1,56 @@
 'use strict';
 
+const axios = require('axios');
 const config = require('../config/env');
-const { decrypt } = require('../utils/cipher');
+const { decrypt } = require('./crypto.service');
 const logger = require('../utils/logger');
 
-const INSTANCE_PATH = '/api/instances';
+const SESSION_PATH = '/session';
+const STATUS_PATH = '/status';
 
-async function _request(path, { method = 'GET', body = null, context = null } = {}) {
-  const url = `${config.wsapi.baseUrl}${path}`;
-  const headers = { 'Content-Type': 'application/json' };
-
-  if (context) {
-    // Per-instance identity: this exact WhatsApp account on WSAPI.
-    headers['X-Instance-Id'] = context.instanceId;
-    if (context.apiKey) headers['X-Api-Key'] = context.apiKey;
-  } else if (config.wsapi.adminKey) {
-    // Admin-level operation (creating a new instance for a user).
-    headers['X-WSAPI-Admin-Key'] = config.wsapi.adminKey;
-  }
-
-  let res;
-  try {
-    res = await fetch(url, {
-      method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-    });
-  } catch (err) {
-    logger.error(`WSAPI network error for ${method} ${url}: ${err.message}`);
-    throw err;
-  }
-
-  const text = await res.text();
-  let data = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch (_) {
-    data = text;
-  }
-
-  if (!res.ok) {
-    const detail = typeof data === 'string' ? data : JSON.stringify(data);
-    const err = new Error(`WSAPI request failed (${res.status}): ${detail}`);
-    err.status = res.status;
-    throw err;
-  }
-
-  return { status: res.status, data };
-}
+const http = axios.create({
+  baseURL: config.wsapi.baseUrl,
+  timeout: 30000,
+  validateStatus: () => true, // handle non-2xx ourselves
+});
 
 function unwrap(data) {
   if (data && typeof data === 'object' && 'data' in data) return data.data;
   return data;
 }
 
-function normalizeInstanceCreate(payload) {
+function assertOk(res) {
+  if (res.status < 200 || res.status >= 300) {
+    const detail = typeof res.data === 'string' ? res.data : JSON.stringify(res.data);
+    const err = new Error(`WSAPI request failed (${res.status}): ${detail}`);
+    err.status = res.status;
+    throw err;
+  }
+  return res;
+}
+
+function adminHeaders() {
+  const headers = {};
+  if (config.wsapi.adminKey) headers['X-WSAPI-Admin-Key'] = config.wsapi.adminKey;
+  return headers;
+}
+
+/**
+ * Per-instance identity: these two headers are what WSAPI uses to route a call
+ * to the correct WhatsApp account. The api key is decrypted here and is never
+ * available anywhere else in the request path.
+ */
+function instanceHeaders(instance) {
+  return {
+    'X-Instance-Id': instance.wsapiInstanceId,
+    'X-Api-Key': decrypt(instance.wsapiApiKeyEncrypted),
+  };
+}
+
+function normalizeCreate(payload) {
   const p = payload && typeof payload === 'object' ? payload : {};
   return {
-    instanceId: p.instanceId || p.instance_id || p.key || p.id || null,
+    instanceId: p.instanceId || p.instance_id || p.id || p.key || null,
     apiKey: p.apiKey || p.api_key || p.token || null,
     pairingCode: p.pairingCode || p.pairing_code || p.code || null,
     expiresAt: p.pairingCodeExpiresAt || p.pairing_code_expires_at || p.expiration || p.expiresAt || null,
@@ -72,85 +65,84 @@ function normalizePairing(payload) {
   };
 }
 
-/**
- * Resolve the X-Instance-Id / X-Api-Key context from a persisted instance row.
- * The stored api_key is encrypted; it is decrypted here and NEVER returned anywhere upstream.
+/* ---------------------------------- /session/* ----------------------------------
+ * GAP (§10): exact paths for creating an instance and requesting a pairing code
+ * are not yet confirmed by Ahmed. These are PLACEHOLDER paths using the generic
+ * /session/* shape; adjust once the real spec is available.
  */
-function apiContextFor(instance) {
-  if (!instance) return null;
-  return {
-    instanceId: instance.wsapiInstanceId,
-    apiKey: decrypt(instance.wsapiApiKey),
-  };
-}
 
-/**
- * Create a brand-new WhatsApp instance on the WSAPI (admin scope).
- * Returns `{ instanceId, apiKey, pairingCode, expiresAt }`.
- * The returned apiKey is encrypted into our DB in instance.service.
- * The WSAPI must run in pairing-code mode (Baileys requestPairingCode).
- */
-async function createInstance() {
-  const { data } = await _request(`${INSTANCE_PATH}/create`, {
-    method: 'POST',
-    body: { use_pairing_code: true },
-  });
-  return normalizeInstanceCreate(unwrap(data));
+/** Create a new WhatsApp instance/session and obtain its pairing code. */
+async function createSession() {
+  let res;
+  try {
+    res = await http.post(`${SESSION_PATH}/create`, { use_pairing_code: true }, { headers: adminHeaders() });
+  } catch (err) {
+    logger.error(`WSAPI network error on createSession: ${err.message}`);
+    throw err;
+  }
+  assertOk(res);
+  return normalizeCreate(unwrap(res.data));
 }
 
 /** Request a fresh pairing code for an existing instance. */
 async function requestPairingCode(instance) {
-  const context = apiContextFor(instance);
-  const { data } = await _request(`${INSTANCE_PATH}/${context.instanceId}/pairing-code`, {
-    method: 'POST',
-    context,
-  });
-  return normalizePairing(unwrap(data));
+  const res = await http.post(`${SESSION_PATH}/pairing-code`, null, { headers: instanceHeaders(instance) });
+  assertOk(res);
+  return normalizePairing(unwrap(res.data));
 }
 
-/** Disconnect (logout) an instance. */
-async function disconnectInstance(instance) {
-  const context = apiContextFor(instance);
-  await _request(`${INSTANCE_PATH}/${context.instanceId}/disconnect`, { method: 'POST', context });
+/** Disconnect/logout the instance. */
+async function disconnectSession(instance) {
+  const res = await http.post(`${SESSION_PATH}/disconnect`, null, { headers: instanceHeaders(instance) });
+  assertOk(res);
+  return unwrap(res.data);
 }
 
-/** Publish an image content_as a WhatsApp Status on THIS account's instance. */
-async function sendWhatsAppStatus(instance, { mediaUrl, content }) {
-  const context = apiContextFor(instance);
-  const { data } = await _request(`${INSTANCE_PATH}/${context.instanceId}/status/image`, {
-    method: 'POST',
-    body: { media_url: mediaUrl, caption: content },
-    context,
-  });
-  return unwrap(data);
+/** Connection/login status of the instance (NOT WhatsApp Status content). */
+async function getSessionStatus(instance) {
+  const res = await http.get(`${SESSION_PATH}/status`, { headers: instanceHeaders(instance) });
+  assertOk(res);
+  return unwrap(res.data);
 }
 
-/** Send an image content to a WhatsApp group with THIS instance. */
-async function sendWhatsAppGroupMessage(instance, groupId, { mediaUrl, content }) {
-  const context = apiContextFor(instance);
-  const { data } = await _request(`${INSTANCE_PATH}/${context.instanceId}/send/group`, {
-    method: 'POST',
-    body: { group_id: groupId, image: mediaUrl, caption: content },
-    context,
-  });
-  return unwrap(data);
+/* ---------------------------------- /status/* ----------------------------------
+ * WhatsApp Status endpoints (confirmed by Calbrs Ahmed).
+ */
+
+/**
+ * Publish a WhatsApp Status. `type` is one of text|image|video.
+ * NOTE (blocker §10): the request body shape for /status/image and /status/video
+ * is NOT officially confirmed yet — buildStatusPayload in dispatch.service is the
+ * single place to adjust it once the OpenAPI schema is available.
+ */
+async function sendStatus(instance, type, payload) {
+  const res = await http.post(`${STATUS_PATH}/${type}`, payload, { headers: instanceHeaders(instance) });
+  assertOk(res);
+  return unwrap(res.data);
 }
 
-/** Delete a previously published status on the instance OWNED by this instance. */
-async function deleteStatus(instance, { mediaUrl } = {}) {
-  const context = apiContextFor(instance);
-  const query = mediaUrl ? `?media_url=${encodeURIComponent(mediaUrl)}` : '';
-  await _request(`${INSTANCE_PATH}/${context.instanceId}/status${query}`, {
-    method: 'DELETE',
-    context,
+/** List current statuses (get status info). */
+async function listStatuses(instance) {
+  const res = await http.get(STATUS_PATH, { headers: instanceHeaders(instance) });
+  assertOk(res);
+  return unwrap(res.data);
+}
+
+/** Delete a live WhatsApp Status by its WSAPI id. */
+async function deleteStatus(instance, statusId) {
+  const res = await http.delete(`${STATUS_PATH}/${encodeURIComponent(statusId)}`, {
+    headers: instanceHeaders(instance),
   });
+  assertOk(res);
+  return unwrap(res.data);
 }
 
 module.exports = {
-  createInstance,
+  createSession,
   requestPairingCode,
-  disconnectInstance,
-  sendWhatsAppStatus,
-  sendWhatsAppGroupMessage,
+  disconnectSession,
+  getSessionStatus,
+  sendStatus,
+  listStatuses,
   deleteStatus,
 };

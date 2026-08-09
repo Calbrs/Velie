@@ -2,19 +2,18 @@
 
 module.exports = {
   up: async (queryInterface, Sequelize) => {
-    await queryInterface.createTable('users', {
+    await queryInterface.createTable('businesses', {
       id: {
         type: Sequelize.DataTypes.INTEGER.UNSIGNED,
         primaryKey: true,
         autoIncrement: true,
         allowNull: false,
       },
-      name: { type: Sequelize.DataTypes.STRING(120), allowNull: false },
-      email: { type: Sequelize.DataTypes.STRING(160), allowNull: false, unique: true },
-      phone: { type: Sequelize.DataTypes.STRING(20), allowNull: true, defaultValue: null },
+      business_name: { type: Sequelize.DataTypes.STRING(120), allowNull: false },
+      owner_phone: { type: Sequelize.DataTypes.STRING(20), allowNull: false, unique: true },
       access_token: { type: Sequelize.DataTypes.STRING(64), allowNull: false, unique: true },
       plan: {
-        type: Sequelize.DataTypes.ENUM('free', 'pro'),
+        type: Sequelize.DataTypes.ENUM('free', 'pro', 'business'),
         allowNull: false,
         defaultValue: 'free',
       },
@@ -24,6 +23,6 @@ module.exports = {
   },
 
   down: async (queryInterface) => {
-    await queryInterface.dropTable('users');
+    await queryInterface.dropTable('businesses');
   },
 };

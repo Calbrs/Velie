@@ -29,10 +29,10 @@ const config = {
     name: read('DB_NAME', 'velie_db'),
   },
   wsapi: {
-    baseUrl: read('WSAPI_BASE_URL', 'http://127.0.0.1:3001').replace(/\/$/, ''),
+    baseUrl: read('WSAPI_BASE_URL', 'https://velie.onrender.com').replace(/\/$/, ''),
     adminKey: read('WSAPI_ADMIN_KEY', ''),
-    encryptionKey: read('WSAPI_KEY_ENCRYPTION_KEY', ''),
   },
+  encryptionKey: read('ENCRYPTION_KEY', ''),
   uploads: {
     dir: read('UPLOAD_DIR', './uploads'),
     maxImageSizeMb: readNumber('MAX_IMAGE_SIZE_MB', 8),
@@ -42,16 +42,21 @@ const config = {
     minDelayMs: readNumber('DISPATCH_MIN_DELAY_MS', 30000),
     maxDelayMs: readNumber('DISPATCH_MAX_DELAY_MS', 60000),
   },
+  cleanup: {
+    cron: read('MEDIA_CLEANUP_CRON', '0 * * * *'),
+    retentionHours: readNumber('MEDIA_RETENTION_HOURS', 24),
+  },
   publicBaseUrl: read('PUBLIC_BASE_URL', 'http://localhost:4000').replace(/\/$/, ''),
   webhookSecret: read('WEBHOOK_SECRET', ''),
 };
 
 if (!config.dispatch.cron.trim()) config.dispatch.cron = '* * * * *';
+if (!config.cleanup.cron.trim()) config.cleanup.cron = '0 * * * *';
+if (config.encryptionKey && config.encryptionKey.length < 16 && config.env === 'production') {
+  logger.warn('ENCRYPTION_KEY looks too short; use a strong 32-byte key in production.');
+}
 if (config.webhookSecret === 'change-me-webhook-secret' && config.env === 'production') {
   logger.warn('WEBHOOK_SECRET is set to a known default value; change it in production.');
-}
-if (config.wsapi.adminKey === 'dev-wsapi-admin-key' && config.env === 'production') {
-  logger.warn('WSAPI_ADMIN_KEY looks like a dev default; change it in production.');
 }
 
 module.exports = config;

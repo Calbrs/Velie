@@ -7,20 +7,20 @@ const WhatsAppInstance = sequelize.define(
   'WhatsAppInstance',
   {
     id: { type: DataTypes.INTEGER.UNSIGNED, primaryKey: true, autoIncrement: true },
-    userId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
-    /** The identity/ID given by WSAPI for this exact WhatsApp account (e.g. `inst_abc123`). */
+    businessId: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false },
+    /** Value of the `X-Instance-Id` header sent to WSAPI. */
     wsapiInstanceId: {
       type: DataTypes.STRING(64),
       allowNull: false,
       unique: true,
       field: 'wsapi_instance_id',
     },
-    /** Per-instance WSAPI API key — stored ENCRYPTED (AES-256-GCM), never exposed to the frontend. */
-    wsapiApiKey: {
-      type: DataTypes.STRING(512),
+    /** Value of the `X-Api-Key` header, AES-256 encrypted at rest (VARBINARY). Never exposed to the frontend. */
+    wsapiApiKeyEncrypted: {
+      type: DataTypes.BLOB,
       allowNull: true,
       defaultValue: null,
-      field: 'wsapi_api_key',
+      field: 'wsapi_api_key_encrypted',
     },
     status: {
       type: DataTypes.ENUM('disconnected', 'pending', 'connected'),
@@ -35,9 +35,8 @@ const WhatsAppInstance = sequelize.define(
 );
 
 WhatsAppInstance.associate = (models) => {
-  WhatsAppInstance.belongsTo(models.User, { foreignKey: 'userId', as: 'user' });
+  WhatsAppInstance.belongsTo(models.Business, { foreignKey: 'businessId', as: 'business' });
   WhatsAppInstance.hasMany(models.WebhookEvent, { foreignKey: 'instanceId', as: 'webhookEvents' });
-  WhatsAppInstance.hasMany(models.ScheduledPost, { foreignKey: 'instanceId', as: 'posts' });
 };
 
 module.exports = WhatsAppInstance;

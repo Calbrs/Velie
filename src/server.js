@@ -1,6 +1,5 @@
 'use strict';
 
-const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const config = require('./config/env');
@@ -9,6 +8,7 @@ const routes = require('./routes');
 const { uploadDir } = require('./services/upload.service');
 const { notFoundHandler, errorHandler } = require('./middleware/error.middleware');
 const { startDispatchWorker } = require('./jobs/dispatch_worker');
+const { startMediaCleanupWorker } = require('./jobs/media_cleanup_worker');
 const logger = require('./utils/logger');
 
 const app = express();
@@ -34,6 +34,7 @@ async function bootstrap() {
   }
 
   startDispatchWorker();
+  startMediaCleanupWorker();
 
   app.listen(config.port, () => {
     logger.info(`Velie Backend listening on port ${config.port} (${config.env})`);

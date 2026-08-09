@@ -9,19 +9,15 @@ module.exports = {
         autoIncrement: true,
         allowNull: false,
       },
-      user_id: {
+      business_id: {
         type: Sequelize.DataTypes.INTEGER.UNSIGNED,
         allowNull: false,
-        references: { model: 'users', key: 'id' },
+        references: { model: 'businesses', key: 'id' },
         onUpdate: 'CASCADE',
         onDelete: 'CASCADE',
       },
       wsapi_instance_id: { type: Sequelize.DataTypes.STRING(64), allowNull: false, unique: true },
-      wsapi_api_key: {
-        type: Sequelize.DataTypes.STRING(512),
-        allowNull: true,
-        defaultValue: null,
-      },
+      wsapi_api_key_encrypted: { type: 'VARBINARY(512)', allowNull: true, defaultValue: null },
       status: {
         type: Sequelize.DataTypes.ENUM('disconnected', 'pending', 'connected'),
         allowNull: false,

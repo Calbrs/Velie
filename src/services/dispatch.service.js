@@ -3,16 +3,11 @@
 const { Op } = require('sequelize');
 const models = require('../models');
 const wsapi = require('./wsapi_client');
+const media = require('./media.service');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 
-const { ScheduledPost, WhatsAppInstance } = models;
-
-function absoluteMediaUrl(mediaUrl) {
-  if (!mediaUrl) return null;
-  if (/^https?:\/\//i.test(mediaUrl)) return mediaUrl;
-  return `${config.publicBaseUrl}${mediaUrl.startsWith('/') ? mediaUrl : `/${mediaUrl}`}`;
-}
+const { PostSchedule, WhatsAppInstance, MediaAsset } = models;
 
 function randomDelayMs() {
   const min = Math.max(0, config.dispatch.minDelayMs);
@@ -24,35 +19,36 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function publish(post, instance) {
-  const mediaUrl = absoluteMediaUrl(post.mediaUrl);
+/**
+ * Single place that builds the WSAPI `/status/{type}` payload.
+ * BLOCKER (§10): exact body fields for /status/image and /status/video are not
+ * confirmed yet — adjust this function when the OpenAPI spec is available,
+ * without touching the dispatch logic.
+ */
+function buildStatusPayload(post, asset) {
+  if (post.type === 'text') return { text: post.content };
+  const mediaUrl = asset ? media.absoluteUrl(asset.storagePath) : null;
+  return { caption: post.content, media_url: mediaUrl };
+}
 
-  if (post.channel === 'wa_group') {
-    if (!post.groupId) throw new Error('group_id inahitajika kwa channel wa_group');
-    return wsapi.sendWhatsAppGroupMessage(instance, post.groupId, {
-      mediaUrl,
-      content: post.content,
-    });
-  }
-
-  return wsapi.sendWhatsAppStatus(instance, { mediaUrl, content: post.content });
+function extractStatusId(result) {
+  const p = result && typeof result === 'object' ? result : {};
+  return p.wsapiStatusId || p.statusId || p.status_id || p.id || p.data?.id || null;
 }
 
 /**
- * Dispatch cycle: every due post is sent through ITS OWN instance
- * (`post.instanceId` → `X-Instance-Id`/`X-Api-Key`), never a shared/default
- * instance. Only connected instances may publish.
+ * Dispatch cycle: every due pending post is published through the owning
+ * business's instance (decrypted api key → X-Instance-Id / X-Api-Key), with an
+ * anti-ban stagger between posts. Success sets `sent` + `published_at` +
+ * `wsapi_status_id` and extends the media asset's expiry.
  */
 async function runDispatchCycle() {
   const now = new Date();
 
-  const due = await ScheduledPost.findAll({
-    where: {
-      status: 'pending',
-      scheduledAt: { [Op.lte]: now },
-    },
-    include: [{ model: WhatsAppInstance, as: 'instance' }],
-    order: [['scheduledAt', 'ASC']],
+  const due = await PostSchedule.findAll({
+    where: { status: 'pending', scheduledTime: { [Op.lte]: now } },
+    include: [{ model: MediaAsset, as: 'mediaAsset' }],
+    order: [['scheduledTime', 'ASC']],
     limit: 200,
   });
 
@@ -60,41 +56,50 @@ async function runDispatchCycle() {
 
   let first = true;
   for (const post of due) {
-    const instance = post.instance;
+    const instance = await WhatsAppInstance.findOne({
+      where: { businessId: post.businessId, status: 'connected' },
+    });
 
     if (!instance) {
       post.status = 'failed';
-      post.error = 'No WhatsApp instance linked to this post';
+      post.retries += 1;
+      post.lastError = 'No connected WhatsApp instance for this business';
       await post.save();
-      logger.error(`post #${post.id}: no linked instance`);
+      logger.error(`post #${post.id}: no connected instance`);
       continue;
     }
 
-    if (instance.status !== 'connected') {
-      post.error = 'WhatsApp instance haijaunganishwa (connected required)';
+    if (post.type !== 'text' && !post.mediaAsset) {
+      post.status = 'failed';
+      post.retries += 1;
+      post.lastError = `Post #${post.id}: media asset missing for type ${post.type}`;
       await post.save();
-      logger.warn(`post #${post.id}: instance ${instance.wsapiInstanceId} is ${instance.status}`);
       continue;
     }
 
     try {
-      await publish(post, instance);
-      post.status = 'published';
-      post.error = null;
+      const payload = buildStatusPayload(post, post.mediaAsset);
+      const result = await wsapi.sendStatus(instance, post.type, payload);
+
+      post.status = 'sent';
       post.publishedAt = new Date();
-      logger.info(`post #${post.id} published via instance ${instance.wsapiInstanceId}`);
+      post.lastError = null;
+      post.wsapiStatusId = extractStatusId(result);
+      await post.save();
+
+      if (post.mediaAssetId) await media.touchExpiry(post.mediaAssetId, post.publishedAt);
+      logger.info(`post #${post.id} sent as ${post.type} via ${instance.wsapiInstanceId} (wsapi_id=${post.wsapiStatusId})`);
     } catch (err) {
       post.status = 'failed';
-      post.attempts += 1;
-      post.error = err.message;
-      post.publishedAt = null;
+      post.retries += 1;
+      post.lastError = err.message;
+      await post.save();
       logger.error(`post #${post.id} failed: ${err.message}`);
     }
-    await post.save();
 
     if (!first) {
       const delay = randomDelayMs();
-      logger.info(`Staggering ${delay}ms between posts (anti-ban)`);
+      logger.info(`Staggering ${delay}ms before next post (anti-ban)`);
       await sleep(delay);
     }
     first = false;
@@ -103,10 +108,4 @@ async function runDispatchCycle() {
   return due.length;
 }
 
-/** User-scoped retry: flip a failed post back into the dispatch queue. */
-async function requeueForRetry(userId, postId) {
-  const post = await models.WebhookEvent; // placeholder removed below
-  return post;
-}
-
-module.exports = { runDispatchCycle, randomDelayMs, absoluteMediaUrl };
+module.exports = { runDispatchCycle, randomDelayMs, buildStatusPayload };

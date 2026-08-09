@@ -9,37 +9,14 @@ const { WebhookEvent, WhatsAppInstance } = models;
 
 const SIGNATURE_HEADER = 'x-wsapi-signature';
 const EVENT_HANDLERS = {
-  pairing_success: async (instance) => {
+  session_connected: async (instance) => {
     instance.status = 'connected';
     instance.connectedAt = new Date();
     instance.pairingCode = null;
     instance.pairingCodeExpiresAt = null;
     await instance.save();
   },
-  pairing_status_update: async (instance, payload) => {
-    if (payload.status === 'connected' && instance.status !== 'connected') {
-      instance.status = 'connected';
-      instance.connectedAt = new Date();
-      instance.pairingCode = null;
-      instance.pairingCodeExpiresAt = null;
-      await instance.save();
-    }
-  },
-  status_update: async (instance, payload) => {
-    const map = { connected: 'connected', disconnected: 'disconnected', pending: 'pending' };
-    const next = map[payload.status || payload.state];
-    if (next && next !== instance.status) {
-      instance.status = next;
-      if (next === 'connected') instance.connectedAt = new Date();
-      if (next === 'disconnected') {
-        instance.connectedAt = null;
-        instance.pairingCode = null;
-        instance.pairingCodeExpiresAt = null;
-      }
-      await instance.save();
-    }
-  },
-  disconnected: async (instance) => {
+  session_disconnected: async (instance) => {
     instance.status = 'disconnected';
     instance.connectedAt = null;
     instance.pairingCode = null;
@@ -50,9 +27,6 @@ const EVENT_HANDLERS = {
     instance.pairingCode = null;
     instance.pairingCodeExpiresAt = null;
     await instance.save();
-  },
-  message_ack: async () => {
-    // Optional: tie an ack back to scheduled_posts by WS message id (Phase 2)
   },
 };
 

@@ -4,7 +4,7 @@ const instanceService = require('../services/instance.service');
 
 async function createOrGet(req, res, next) {
   try {
-    const instance = await instanceService.getOrCreateForUser(req.user);
+    const instance = await instanceService.getOrCreateForBusiness(req.business);
 
     return res.status(201).json({
       id: instance.id,
@@ -20,7 +20,7 @@ async function createOrGet(req, res, next) {
 
 async function getStatus(req, res, next) {
   try {
-    const instance = await instanceService.getForUser(req.user, req.params.id);
+    const instance = await instanceService.getForBusiness(req.business, req.params.id);
     return res.json({
       id: instance.id,
       wsapi_instance_id: instance.wsapiInstanceId,
@@ -36,7 +36,7 @@ async function getStatus(req, res, next) {
 
 async function refreshPairingCode(req, res, next) {
   try {
-    const instance = await instanceService.refreshPairingCode(req.user, req.params.id);
+    const instance = await instanceService.refreshPairingCode(req.business, req.params.id);
     return res.json({
       id: instance.id,
       wsapi_instance_id: instance.wsapiInstanceId,
@@ -51,7 +51,7 @@ async function refreshPairingCode(req, res, next) {
 
 async function disconnect(req, res, next) {
   try {
-    const instance = await instanceService.disconnect(req.user, req.params.id);
+    const instance = await instanceService.disconnect(req.business, req.params.id);
     return res.json({
       id: instance.id,
       wsapi_instance_id: instance.wsapiInstanceId,

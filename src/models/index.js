@@ -1,18 +1,20 @@
 'use strict';
 
 const { sequelize } = require('../config/db');
-const User = require('./user.model');
+const Business = require('./business.model');
 const WhatsAppInstance = require('./whatsapp_instance.model');
-const ScheduledPost = require('./scheduled_post.model');
+const MediaAsset = require('./media_asset.model');
+const PostSchedule = require('./post_schedule.model');
 const WebhookEvent = require('./webhook_event.model');
-const SocialAccount = require('./social_account.model');
+const Subscription = require('./subscription.model');
 
 const models = {
-  User,
+  Business,
   WhatsAppInstance,
-  ScheduledPost,
+  MediaAsset,
+  PostSchedule,
   WebhookEvent,
-  SocialAccount,
+  Subscription,
 };
 
 for (const model of Object.values(models)) {

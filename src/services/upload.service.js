@@ -36,20 +36,16 @@ const imageUpload = multer({
   },
 });
 
-function imageUrlFromFile(file) {
-  return file ? `/uploads/${file.filename}` : null;
-}
-
-function deleteImageFile(imageUrl) {
-  if (!imageUrl) return;
-  const name = path.basename(imageUrl);
+function deleteImageFile(storagePath) {
+  if (!storagePath) return;
+  const name = path.basename(storagePath);
   const full = path.join(uploadDir, name);
   if (!full.startsWith(uploadDir)) return;
   fs.unlink(full, (err) => {
     if (err && err.code !== 'ENOENT') {
-      // non-fatal; log via caller if needed
+      // non-fatal; media cleanup still removes the DB row
     }
   });
 }
 
-module.exports = { imageUpload, imageUrlFromFile, deleteImageFile, uploadDir, ALLOWED_MIME };
+module.exports = { imageUpload, deleteImageFile, uploadDir, ALLOWED_MIME };
