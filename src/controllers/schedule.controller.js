@@ -216,11 +216,16 @@ async function retry(req, res, next) {
  */
 async function sendNow(req, res, next) {
   try {
-    const post = await findOwnedPost(req.business.id, req.params.id);
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) throw new HttpError(400, 'Invalid post id');
+    const post = await PostSchedule.findOne({
+      where: { id, businessId: req.business.id },
+      include: [{ model: MediaAsset, as: 'mediaAsset' }],
+    });
+    if (!post) throw new HttpError(404, 'Post haipo au sio yako');
     if (post.status === 'sent') throw new HttpError(409, 'Post imeshatumwa');
 
-    const asset = post.mediaAssetId ? await MediaAsset.findByPk(post.mediaAssetId) : null;
-    if (post.type !== 'text' && !asset) throw new HttpError(409, 'Media ya post haipo');
+    if (post.type !== 'text' && !post.mediaAsset) throw new HttpError(409, 'Media ya post haipo');
 
     try {
       await dispatch.dispatchOne(post);
@@ -229,8 +234,7 @@ async function sendNow(req, res, next) {
       throw new HttpError(502, `Kutuma post kushindikana: ${err.message}`);
     }
 
-    const updatedAsset = post.mediaAssetId ? await MediaAsset.findByPk(post.mediaAssetId) : null;
-    return res.json(serialize(post, updatedAsset));
+    return res.json(serialize(post, post.mediaAsset));
   } catch (err) {
     return next(err);
   }
