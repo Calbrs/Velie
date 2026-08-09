@@ -39,7 +39,21 @@ async function getForBusiness(business, instanceId) {
  * logged_in/logged_out events reach us. The api key is encrypted before storage
  * and is never returned anywhere.
  */
-async function getOrCreateForBusiness(business) {
+/**
+ * The webhook URL WSAPI must call must point at THIS backend as reachable from
+ * the internet. Prefer the URL derived from the incoming request (works on
+ * Render without any env var), falling back to PUBLIC_BASE_URL for local dev.
+ */
+function resolvePublicBaseUrl(req) {
+  if (req && req.get) {
+    const host = req.get('host');
+    const proto = req.get('x-forwarded-proto') || req.protocol;
+    if (host) return `${proto}://${host}`;
+  }
+  return config.publicBaseUrl;
+}
+
+async function getOrCreateForBusiness(business, publicBaseUrl) {
   const existing = await WhatsAppInstance.findOne({
     where: { businessId: business.id, status: ['pending', 'connected'] },
     order: [['createdAt', 'DESC']],
@@ -53,7 +67,7 @@ async function getOrCreateForBusiness(business) {
 
   const instanceId = randomWsInstanceId(business.id);
   const apiKey = generateAccessToken(32);
-  const webhookUrl = `${config.publicBaseUrl}/api/webhook/wsapi`;
+  const webhookUrl = `${publicBaseUrl || config.publicBaseUrl}/api/webhook/wsapi`;
   const signingSecret = config.webhookSecret || undefined;
 
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -156,5 +170,6 @@ module.exports = {
   disconnect,
   markPairingExpired,
   randomWsInstanceId,
+  resolvePublicBaseUrl,
   pairingExpired,
 };

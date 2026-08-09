@@ -4,7 +4,8 @@ const instanceService = require('../services/instance.service');
 
 async function createOrGet(req, res, next) {
   try {
-    const instance = await instanceService.getOrCreateForBusiness(req.business);
+    const publicBaseUrl = instanceService.resolvePublicBaseUrl(req);
+    const instance = await instanceService.getOrCreateForBusiness(req.business, publicBaseUrl);
 
     return res.status(201).json({
       id: instance.id,
