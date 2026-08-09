@@ -16,5 +16,6 @@ router.get('/:id', validIntParam('id'), scheduleController.getOne);
 router.put('/:id', validIntParam('id'), imageUpload.single('image'), scheduleController.update);
 router.delete('/:id', validIntParam('id'), scheduleController.remove);
 router.post('/:id/retry', validIntParam('id'), scheduleController.retry);
+router.post('/:id/send-now', validIntParam('id'), scheduleController.sendNow);
 
 module.exports = router;

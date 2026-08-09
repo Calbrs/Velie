@@ -37,6 +37,41 @@ function extractStatusId(result) {
 }
 
 /**
+ * Publish a single post right now through the owning business's connected
+ * instance. Used by "Post Now" (immediate, no cron wait) and by the dispatch
+ * cycle. Throws on failure so callers can decide how to record it.
+ */
+async function dispatchOne(post) {
+  const instance = await WhatsAppInstance.findOne({
+    where: { businessId: post.businessId, status: 'connected' },
+  });
+  if (!instance) {
+    const err = new Error('No connected WhatsApp instance for this business');
+    err.code = 'NO_INSTANCE';
+    throw err;
+  }
+
+  if (post.type !== 'text' && !post.mediaAsset) {
+    const err = new Error(`Media asset missing for type ${post.type}`);
+    err.code = 'NO_MEDIA';
+    throw err;
+  }
+
+  const payload = buildStatusPayload(post, post.mediaAsset);
+  const result = await wsapi.sendStatus(instance, post.type, payload);
+
+  post.status = 'sent';
+  post.publishedAt = new Date();
+  post.lastError = null;
+  post.wsapiStatusId = extractStatusId(result);
+  await post.save();
+
+  if (post.mediaAssetId) await media.touchExpiry(post.mediaAssetId, post.publishedAt);
+  logger.info(`post #${post.id} sent as ${post.type} via ${instance.wsapiInstanceId} (wsapi_id=${post.wsapiStatusId})`);
+  return post;
+}
+
+/**
  * Dispatch cycle: every due pending post is published through the owning
  * business's instance (decrypted api key → X-Instance-Id / X-Api-Key), with an
  * anti-ban stagger between posts. Success sets `sent` + `published_at` +
@@ -56,39 +91,8 @@ async function runDispatchCycle() {
 
   let first = true;
   for (const post of due) {
-    const instance = await WhatsAppInstance.findOne({
-      where: { businessId: post.businessId, status: 'connected' },
-    });
-
-    if (!instance) {
-      post.status = 'failed';
-      post.retries += 1;
-      post.lastError = 'No connected WhatsApp instance for this business';
-      await post.save();
-      logger.error(`post #${post.id}: no connected instance`);
-      continue;
-    }
-
-    if (post.type !== 'text' && !post.mediaAsset) {
-      post.status = 'failed';
-      post.retries += 1;
-      post.lastError = `Post #${post.id}: media asset missing for type ${post.type}`;
-      await post.save();
-      continue;
-    }
-
     try {
-      const payload = buildStatusPayload(post, post.mediaAsset);
-      const result = await wsapi.sendStatus(instance, post.type, payload);
-
-      post.status = 'sent';
-      post.publishedAt = new Date();
-      post.lastError = null;
-      post.wsapiStatusId = extractStatusId(result);
-      await post.save();
-
-      if (post.mediaAssetId) await media.touchExpiry(post.mediaAssetId, post.publishedAt);
-      logger.info(`post #${post.id} sent as ${post.type} via ${instance.wsapiInstanceId} (wsapi_id=${post.wsapiStatusId})`);
+      await dispatchOne(post);
     } catch (err) {
       post.status = 'failed';
       post.retries += 1;
@@ -108,4 +112,4 @@ async function runDispatchCycle() {
   return due.length;
 }
 
-module.exports = { runDispatchCycle, randomDelayMs, buildStatusPayload };
+module.exports = { runDispatchCycle, dispatchOne, randomDelayMs, buildStatusPayload };

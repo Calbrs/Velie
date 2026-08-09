@@ -3,6 +3,7 @@
 const models = require('../models');
 const wsapi = require('../services/wsapi_client');
 const media = require('../services/media.service');
+const dispatch = require('../services/dispatch.service');
 const HttpError = require('../utils/HttpError');
 const logger = require('../utils/logger');
 
@@ -209,4 +210,30 @@ async function retry(req, res, next) {
   }
 }
 
-module.exports = { create, list, getOne, update, remove, retry, serialize, findOwnedPost };
+/**
+ * POST /posts/:id/send-now — publish immediately (no cron wait).
+ * Requires the post to be pending and the business to have a connected instance.
+ */
+async function sendNow(req, res, next) {
+  try {
+    const post = await findOwnedPost(req.business.id, req.params.id);
+    if (post.status === 'sent') throw new HttpError(409, 'Post imeshatumwa');
+
+    const asset = post.mediaAssetId ? await MediaAsset.findByPk(post.mediaAssetId) : null;
+    if (post.type !== 'text' && !asset) throw new HttpError(409, 'Media ya post haipo');
+
+    try {
+      await dispatch.dispatchOne(post);
+    } catch (err) {
+      if (err.code === 'NO_INSTANCE') throw new HttpError(409, 'WhatsApp haijaunganishwa');
+      throw new HttpError(502, `Kutuma post kushindikana: ${err.message}`);
+    }
+
+    const updatedAsset = post.mediaAssetId ? await MediaAsset.findByPk(post.mediaAssetId) : null;
+    return res.json(serialize(post, updatedAsset));
+  } catch (err) {
+    return next(err);
+  }
+}
+
+module.exports = { create, list, getOne, update, remove, retry, sendNow, serialize, findOwnedPost };
