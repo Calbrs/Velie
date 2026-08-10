@@ -2,8 +2,35 @@
 
 const { Router } = require('express');
 const store = require('../store');
+const config = require('../config');
+const fs = require('fs');
 
 const router = Router();
+
+router.get('/diag', (req, res) => {
+  let chromeState = { checked: false };
+  try {
+    const puppeteer = require('puppeteer');
+    const execPath = puppeteer.executablePath();
+    chromeState = {
+      checked: true,
+      executablePath: execPath,
+      exists: fs.existsSync(execPath),
+      cacheDir: process.env.PUPPETEER_CACHE_DIR || null,
+    };
+  } catch (err) {
+    chromeState = { checked: true, error: err.message, cacheDir: process.env.PUPPETEER_CACHE_DIR || null };
+  }
+  return res.json({
+    data: {
+      cacheDir: process.env.PUPPETEER_CACHE_DIR || null,
+      sessionDir: config.sessionDir,
+      storePath: config.storePath,
+      chrome: chromeState,
+      instances: store.getAll().length,
+    },
+  });
+});
 
 router.post('/instances', (req, res) => {
   const { id, apiKey, webhookUrl, signingSecret } = req.body || {};

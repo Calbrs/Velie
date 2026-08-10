@@ -1,8 +1,12 @@
 'use strict';
 
+// Load config FIRST so it can set PUPPETEER_CACHE_DIR and self-heal the Chrome
+// install before whatsapp-web.js/puppeteer is imported. If the env var is set
+// after puppeteer loads its configuration, puppeteer may have already captured
+// the default (Render's build-only) cache directory.
+const config = require('./config');
 const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
 const QRCode = require('qrcode');
-const config = require('./config');
 const webhook = require('./webhook');
 
 const sessions = new Map();
