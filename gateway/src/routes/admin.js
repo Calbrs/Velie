@@ -24,8 +24,12 @@ router.get('/diag', (req, res) => {
   }
   let heal = null;
   try {
-    const healPath = path.join(__dirname, '..', 'data', 'chrome-heal.json');
-    if (fs.existsSync(healPath)) heal = JSON.parse(fs.readFileSync(healPath, 'utf8'));
+    const healPath = config.sessionDir.replace(/[\\/]sessions$/, '') + '/chrome-heal.json';
+    const alternate = path.join(__dirname, '..', '..', 'data', 'chrome-heal.json');
+    for (const hp of [healPath, alternate]) {
+      if (fs.existsSync(hp)) { heal = JSON.parse(fs.readFileSync(hp, 'utf8')); break; }
+    }
+    if (!heal) heal = { missingPath: [healPath, alternate] };
   } catch (err) {
     heal = { readError: err.message };
   }
@@ -49,7 +53,7 @@ router.get('/diag', (req, res) => {
   }
   let dataDir = null;
   try {
-    dataDir = fs.readdirSync(path.join(__dirname, '..', 'data'));
+    dataDir = fs.readdirSync(path.join(__dirname, '..', '..', 'data'));
   } catch (err) {
     dataDir = { error: err.message };
   }

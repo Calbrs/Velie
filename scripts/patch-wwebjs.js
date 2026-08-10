@@ -9,26 +9,23 @@ const { execSync } = require('child_process');
 // explicitly. We install the pinned "chrome" build into the project-local
 // `.cache/puppeteer` so it is part of the build output that gets persisted to
 // the runtime image (on Render, the default ~/.cache is build-only).
+//
+// NOTE: we intentionally do NOT use `npx puppeteer browsers install chrome`
+// here. @puppeteer/browsers' unpack (extract-zip/yauzl) hangs mid-extraction
+// on the Chrome 146 archive and exits 0 leaving a partial install. Our own
+// installer downloads + extracts with unzipper instead.
 try {
   const root = path.join(__dirname, '..');
   const cacheDir = path.join(root, '.cache', 'puppeteer');
-  // Remove any partial install so the provider re-downloads cleanly instead of
-  // failing with "browser folder exists but executable is missing".
-  try {
-    fs.rmSync(cacheDir, { recursive: true, force: true });
-  } catch (e) {
-    console.error('[patch] could not clear cache, continuing:', e.message);
-  }
+  const puppeteer = require(path.join(root, 'node_modules', 'puppeteer'));
+  const executablePath = puppeteer.executablePath();
   process.env.PUPPETEER_CACHE_DIR = cacheDir;
-  execSync('npx puppeteer browsers install chrome', {
-    cwd: root,
-    stdio: 'inherit',
-    timeout: 600000,
-    env: { ...process.env, PUPPETEER_CACHE_DIR: cacheDir },
-  });
-  console.log('[patch] Chrome installed into', cacheDir);
+  const { installChrome } = require('./install-chrome');
+  installChrome(executablePath, cacheDir)
+    .then((p) => console.log('[patch] Chrome installed into', p))
+    .catch((err) => console.error('[patch] Chrome install failed (continuing):', err.message));
 } catch (err) {
-  console.error('[patch] Chrome install failed (continuing):', err.message);
+  console.error('[patch] Chrome setup failed (continuing):', err.message);
 }
 
 const target = path.join(

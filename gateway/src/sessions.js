@@ -120,7 +120,10 @@ function makeClient(instance) {
   return meta;
 }
 
-function start(instance, phone) {
+async function start(instance, phone) {
+  // Ensure Chrome is available (self-heal may still be downloading at boot)
+  // before launching whatsapp-web.js, otherwise initialization fails fast.
+  await config.waitForChrome(120000).catch(() => { /* resent; surface later */ });
   let meta = sessions.get(instance.id);
   if (!meta) {
     meta = makeClient(instance);
@@ -166,7 +169,7 @@ async function waitForPage(client, timeoutMs) {
 }
 
 async function getPairingQr(instance, timeoutMs) {
-  const meta = start(instance);
+  const meta = await start(instance);
   if (meta.ready) return { connected: true };
   meta.qr = null;
   const deadline = Date.now() + timeoutMs;
@@ -189,7 +192,7 @@ async function getPairingQr(instance, timeoutMs) {
  * The code is 8 chars and is entered on the phone under Linked Devices.
  */
 async function getPairingCode(instance, phone, timeoutMs) {
-  const meta = start(instance, phone);
+  const meta = await start(instance, phone);
   if (meta.ready) return { connected: true };
 
   if (typeof meta.client.requestPairingCode !== 'function') {
@@ -245,7 +248,7 @@ function statusOf(instance) {
 }
 
 async function sendStatus(instance, type, payload) {
-  const meta = start(instance);
+  const meta = await start(instance);
   if (!meta.ready) throw statusError('WhatsApp instance is not connected', 409);
   const p = payload || {};
   let messageId;

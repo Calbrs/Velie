@@ -25,25 +25,23 @@ function writeHealLog(entry) {
   }
 }
 
-try {
-  const puppeteer = require('puppeteer');
-  let chromePath = null;
-  let execOut = '';
-  let execErr = '';
-  let downloadError = null;
+(async function selfHeal() {
   try {
-    chromePath = puppeteer.executablePath();
-  } catch (e) {
-    chromePath = null;
-  }
-  if (chromePath && fs.existsSync(chromePath)) {
-    console.log('[gateway] Chrome present at', chromePath);
-    writeHealLog({ ok: true, chromePath, heal: 'none' });
-  } else {
+    const puppeteer = require('puppeteer');
+    let chromePath = null;
+    let downloadError = null;
+    try {
+      chromePath = puppeteer.executablePath();
+    } catch (e) {
+      chromePath = null;
+    }
+    if (chromePath && fs.existsSync(chromePath)) {
+      console.log('[gateway] Chrome present at', chromePath);
+      writeHealLog({ ok: true, chromePath, heal: 'none' });
+      chromeReady.resolve(true);
+      return;
+    }
     console.log('[gateway] Chrome missing, installing at runtime...');
-    const { execSync } = require('child_process');
-    // DefaultProvider refuses to re-download when a (possibly partial/stale)
-    // browser folder already exists. Remove it so the install can start clean.
     const cacheDir = process.env.PUPPETEER_CACHE_DIR;
     try {
       fs.rmSync(cacheDir, { recursive: true, force: true });
@@ -53,15 +51,13 @@ try {
     }
     const started = Date.now();
     try {
-      execOut = execSync('npx puppeteer browsers install chrome', {
-        cwd: path.join(__dirname, '..', '..'),
-        encoding: 'utf8',
-        timeout: 900000,
-        maxBuffer: 32 * 1024 * 1024,
-      });
+      // Use our own installer. @puppeteer/browsers' yauzl-based unpack hangs
+      // mid-extraction on the Chrome 146 archive (observed locally and on
+      // Render), so we download + extract with unzipper instead.
+      const { installChrome } = require('../../../scripts/install-chrome');
+      await installChrome(puppeteer.executablePath(), cacheDir, msg => console.log('[gateway]', msg));
     } catch (e) {
-      execErr = String((e.stdout || '') + (e.stderr || '') + e.message);
-      downloadError = e.message;
+      downloadError = String((e && e.stack) || e);
     }
     const ms = Date.now() - started;
     try {
@@ -70,20 +66,41 @@ try {
       chromePath = null;
     }
     const ok = !!chromePath && fs.existsSync(chromePath);
-    const tail = (execOut + execErr).split('\n').filter(Boolean).slice(-40).join('\n');
     console.log(ok ? `[gateway] Chrome installed at ${chromePath}` : '[gateway] Chrome install finished but binary still missing');
-    console.log('[gateway] heal tail:\n' + tail);
-    writeHealLog({ ok, chromePath, heal: 'attempted', ms, downloadError, tail });
+    writeHealLog({ ok, chromePath, heal: 'attempted', ms, downloadError });
+    if (ok) chromeReady.resolve(true);
+  } catch (err) {
+    console.error('[gateway] Chromium self-check failed:', err.message);
+    writeHealLog({ ok: false, heal: 'failed', error: err.message });
   }
-} catch (err) {
-  console.error('[gateway] Chromium self-check failed:', err.message);
-  writeHealLog({ ok: false, heal: 'failed', error: err.message });
-}
+})().catch(err => {
+  console.error('[gateway] Chromium self-check crashed:', err.message);
+  writeHealLog({ ok: false, heal: 'crashed', error: String(err && err.stack || err) });
+});
 
 function read(name, fallback) {
   const value = process.env[name];
   if (value === undefined || value === '') return fallback;
   return value;
+}
+
+const chromeReady = (() => {
+  let resolve, reject;
+  const p = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise: p, resolve, reject };
+})();
+
+async function waitForChrome(timeoutMs) {
+  const deadline = Date.now() + (timeoutMs || 120000);
+  while (Date.now() < deadline) {
+    if (fs.existsSync(process.env.PUPPETEER_CACHE_DIR)) return true;
+    try {
+      const puppeteer = require('puppeteer');
+      if (fs.existsSync(puppeteer.executablePath())) return true;
+    } catch (err) { /* executablePath may throw */ }
+    await new Promise(r => setTimeout(r, 250));
+  }
+  throw new Error('Chrome not available within timeout');
 }
 
 module.exports = {
@@ -94,4 +111,6 @@ module.exports = {
   sessionDir: read('SESSION_DIR', path.join(__dirname, '..', 'data', 'sessions')),
   storePath: read('STORE_PATH', path.join(__dirname, '..', 'data', 'instances.json')),
   chromePath: read('CHROME_PATH', ''),
+  chromeReady: chromeReady.promise,
+  waitForChrome,
 };
