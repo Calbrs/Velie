@@ -35,7 +35,10 @@ const config = {
     // The gateway (whatsapp-web.js) now runs in-process on the same service, so
     // the backend reaches it over the same host/port unless WSAPI_BASE_URL is set.
     baseUrl: read('WSAPI_BASE_URL', `http://localhost:${port}`).replace(/\/$/, ''),
-    adminKey: read('WSAPI_ADMIN_KEY', ''),
+    // Accept either key so the single admin key configured in the deployment
+    // works for both the backend (sends X-Api-Key) and the embedded gateway
+    // (validates it via requireAdmin).
+    adminKey: read('WSAPI_ADMIN_KEY', read('ADMIN_KEY', '')),
   },
   encryptionKey: read('ENCRYPTION_KEY', ''),
   uploads: {
