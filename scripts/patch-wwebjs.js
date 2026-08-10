@@ -2,6 +2,22 @@
 
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
+
+// Puppeteer 24 needs a Chrome binary to launch. On fresh hosts (Render, CI)
+// `npm install` runs puppeteer's postinstall, but to be safe we install the
+// pinned "chrome" build explicitly into the default (or configured) cache.
+try {
+  const root = path.join(__dirname, '..');
+  execSync('npx puppeteer browsers install chrome', {
+    cwd: root,
+    stdio: 'inherit',
+    timeout: 600000,
+  });
+  console.log('[patch] Chrome installed via puppeteer');
+} catch (err) {
+  console.error('[patch] Chrome install failed (continuing):', err.message);
+}
 
 const target = path.join(
   __dirname,
