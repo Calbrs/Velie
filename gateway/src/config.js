@@ -4,12 +4,11 @@ const path = require('path');
 require('dotenv').config();
 
 // Reach Chrome from the project-local cache that the build postinstall
-// populates (see scripts/patch-wwebjs.js). On Render the default puppeteer
-// cache (home-dir based) is build-only and absent at runtime, so pin it here
-// before any whatsapp-web.js/puppeteer client launches.
-if (!process.env.PUPPETEER_CACHE_DIR) {
-  process.env.PUPPETEER_CACHE_DIR = path.join(__dirname, '..', '..', '.cache', 'puppeteer');
-}
+// populates (see scripts/patch-wwebjs.js). Render pre-sets PUPPETEER_CACHE_DIR
+// to a build-only default (/opt/render/.cache/puppeteer) that is absent at
+// runtime, so we force it to the project cache before puppeteer launches.
+process.env.PUPPETEER_CACHE_DIR = path.join(__dirname, '..', '..', '.cache', 'puppeteer');
+console.log(`[gateway] PUPPETEER_CACHE_DIR=${process.env.PUPPETEER_CACHE_DIR}`);
 
 function read(name, fallback) {
   const value = process.env[name];
