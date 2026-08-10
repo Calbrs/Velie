@@ -26,9 +26,17 @@ services:
       - key: DB_SSL
         value: "true"
       - key: WSAPI_BASE_URL
-        value: https://velie.onrender.com
+        value: http://localhost:4000
       - key: WSAPI_ADMIN_KEY
         sync: false
+      - key: ADMIN_KEY
+        sync: false
+      - key: SESSION_DIR
+        value: ./gateway/data/sessions
+      - key: STORE_PATH
+        value: ./gateway/data/instances.json
+      - key: PUPPETEER_CACHE_DIR
+        value: ./.cache/puppeteer
       - key: ENCRYPTION_KEY
         sync: false
       - key: WEBHOOK_SECRET

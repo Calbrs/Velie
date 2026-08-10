@@ -18,9 +18,11 @@ function readNumber(name, fallback) {
   return value;
 }
 
+const port = readNumber('PORT', 4000);
+
 const config = {
   env: read('NODE_ENV', 'development'),
-  port: readNumber('PORT', 4000),
+  port,
   db: {
     host: read('DB_HOST', '127.0.0.1'),
     port: readNumber('DB_PORT', 3306),
@@ -30,7 +32,9 @@ const config = {
     ssl: read('DB_SSL', 'false') === 'true',
   },
   wsapi: {
-    baseUrl: read('WSAPI_BASE_URL', 'https://velie.onrender.com').replace(/\/$/, ''),
+    // The gateway (whatsapp-web.js) now runs in-process on the same service, so
+    // the backend reaches it over the same host/port unless WSAPI_BASE_URL is set.
+    baseUrl: read('WSAPI_BASE_URL', `http://localhost:${port}`).replace(/\/$/, ''),
     adminKey: read('WSAPI_ADMIN_KEY', ''),
   },
   encryptionKey: read('ENCRYPTION_KEY', ''),

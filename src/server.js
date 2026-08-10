@@ -6,18 +6,28 @@ const config = require('./config/env');
 const { testConnection } = require('./config/db');
 const routes = require('./routes');
 const { uploadDir } = require('./services/upload.service');
+const { syncGatewayInstances } = require('./services/gateway_bridge');
 const { notFoundHandler, errorHandler } = require('./middleware/error.middleware');
 const { startDispatchWorker } = require('./jobs/dispatch_worker');
 const { startMediaCleanupWorker } = require('./jobs/media_cleanup_worker');
 const logger = require('./utils/logger');
+
+// The Velie Gateway (whatsapp-web.js) is embedded in this service and exposed
+// on the same URL (/: /admin, /session, /status) so the backend and the gateway
+// are one deployment.
+const gatewayApp = require('../gateway/src/app');
 
 const app = express();
 
 app.disable('x-powered-by');
 app.use(cors());
 // Keep the raw body so webhooks can verify HMAC-SHA256 (X-Webhook-Signature).
-app.use(express.json({ limit: '2mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
+// Limit must cover base64 status media (~11MB for an 8MB file).
+app.use(express.json({ limit: '20mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true }));
+
+// Gateway routes first so /admin, /session, /status hit the embedded gateway.
+app.use(gatewayApp);
 
 app.use('/uploads', express.static(uploadDir));
 
@@ -37,6 +47,13 @@ async function bootstrap() {
     await testConnection();
   } catch (err) {
     logger.error('Server not started: database unavailable');
+    process.exit(1);
+  }
+
+  try {
+    await syncGatewayInstances();
+  } catch (err) {
+    logger.error(`Gateway store sync failed: ${err.message}`);
     process.exit(1);
   }
 
