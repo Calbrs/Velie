@@ -42,12 +42,21 @@ try {
   } else {
     console.log('[gateway] Chrome missing, installing at runtime...');
     const { execSync } = require('child_process');
+    // DefaultProvider refuses to re-download when a (possibly partial/stale)
+    // browser folder already exists. Remove it so the install can start clean.
+    const cacheDir = process.env.PUPPETEER_CACHE_DIR;
+    try {
+      fs.rmSync(cacheDir, { recursive: true, force: true });
+      console.log('[gateway] removed stale puppeteer cache', cacheDir);
+    } catch (e) {
+      console.error('[gateway] could not remove cache dir (continuing):', e.message);
+    }
     const started = Date.now();
     try {
       execOut = execSync('npx puppeteer browsers install chrome', {
         cwd: path.join(__dirname, '..', '..'),
         encoding: 'utf8',
-        timeout: 600000,
+        timeout: 900000,
         maxBuffer: 32 * 1024 * 1024,
       });
     } catch (e) {

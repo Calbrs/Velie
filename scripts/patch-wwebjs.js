@@ -12,6 +12,13 @@ const { execSync } = require('child_process');
 try {
   const root = path.join(__dirname, '..');
   const cacheDir = path.join(root, '.cache', 'puppeteer');
+  // Remove any partial install so the provider re-downloads cleanly instead of
+  // failing with "browser folder exists but executable is missing".
+  try {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  } catch (e) {
+    console.error('[patch] could not clear cache, continuing:', e.message);
+  }
   process.env.PUPPETEER_CACHE_DIR = cacheDir;
   execSync('npx puppeteer browsers install chrome', {
     cwd: root,
