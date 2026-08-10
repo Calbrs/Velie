@@ -16,23 +16,33 @@ console.log(`[gateway] PUPPETEER_CACHE_DIR=${process.env.PUPPETEER_CACHE_DIR}`);
 
 try {
   const puppeteer = require('puppeteer');
-  const chromePath = puppeteer.executablePath();
-  if (fs.existsSync(chromePath)) {
+  let chromePath = null;
+  try {
+    chromePath = puppeteer.executablePath();
+  } catch (e) {
+    chromePath = null;
+  }
+  if (chromePath && fs.existsSync(chromePath)) {
     console.log('[gateway] Chrome present at', chromePath);
   } else {
-    console.log('[gateway] Chrome missing at', chromePath, '- installing at runtime...');
+    console.log('[gateway] Chrome missing, installing at runtime...');
     const { execSync } = require('child_process');
     execSync('npx puppeteer browsers install chrome', {
       cwd: path.join(__dirname, '..', '..'),
       stdio: 'inherit',
       timeout: 600000,
     });
-    fs.existsSync(chromePath)
+    try {
+      chromePath = puppeteer.executablePath();
+    } catch (e) {
+      chromePath = null;
+    }
+    chromePath && fs.existsSync(chromePath)
       ? console.log('[gateway] Chrome installed at', chromePath)
-      : console.error('[gateway] Chrome install finished but binary still missing at', chromePath);
+      : console.error('[gateway] Chrome install finished but binary still missing');
   }
 } catch (err) {
-  console.error('[gateway] Chromium self-check skipped:', err.message);
+  console.error('[gateway] Chromium self-check failed:', err.message);
 }
 
 function read(name, fallback) {
