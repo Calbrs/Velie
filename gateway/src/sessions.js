@@ -116,12 +116,13 @@ function makeClient(instance) {
   return meta;
 }
 
-function start(instance) {
+function start(instance, phone) {
   let meta = sessions.get(instance.id);
   if (!meta) {
     meta = makeClient(instance);
     sessions.set(instance.id, meta);
   }
+  meta.phone = phone || meta.phone || null;
   if (meta.ready || meta.initializing) return meta;
   meta.initializing = true;
   meta.client.initialize().catch((err) => {
@@ -142,12 +143,22 @@ function recreate(instance) {
   }
   const meta = makeClient(instance);
   sessions.set(instance.id, meta);
+  if (old) meta.phone = old.phone || null;
   meta.initializing = true;
   meta.client.initialize().catch((err) => {
     meta.initializing = false;
     meta.lastError = err && err.message;
   });
   return meta;
+}
+
+async function waitForPage(client, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (client.pupPage) return;
+    await sleep(300);
+  }
+  throw statusError('WhatsApp page did not initialize', 502);
 }
 
 async function getPairingQr(instance, timeoutMs) {
@@ -167,6 +178,56 @@ async function getPairingQr(instance, timeoutMs) {
     await sleep(300);
   }
   throw statusError('No QR code available within timeout', 502);
+}
+
+/**
+ * Pair via WhatsApp's "link with a phone number" code (what the Velie app uses).
+ * The code is 8 chars and is entered on the phone under Linked Devices.
+ */
+async function getPairingCode(instance, phone, timeoutMs) {
+  const meta = start(instance, phone);
+  if (meta.ready) return { connected: true };
+
+  if (typeof meta.client.requestPairingCode !== 'function') {
+    return getPairingQr(instance, 20000);
+  }
+
+  const digits = String(meta.phone || '').replace(/[^0-9]/g, '');
+  if (!digits) throw statusError('phone is required (E.164)', 400);
+
+  await waitForPage(meta.client, 15000);
+
+  // requestPairingCode needs WhatsApp Web's linking UI ready AND the socket in a
+  // linking state (UNPAIRED/UNPAIRED_IDLE); it throws a cryptic error otherwise.
+  // Poll until then, bailing early if a stored session restores and connects.
+  const page = meta.client.pupPage;
+  const deadline = Date.now() + Math.min(Number(timeoutMs) || 30000, 30000);
+  let uiReady = false;
+  while (Date.now() < deadline) {
+    if (meta.ready) return { connected: true };
+    try {
+      uiReady = await page.evaluate(() => {
+        let sock = '';
+        try { sock = window.require('WAWebSocketModel').Socket.state; } catch (e) { /* ignore */ }
+        return !!(window.AuthStore && window.AuthStore.PairingCodeLinkUtils
+          && (sock === 'UNPAIRED' || sock === 'UNPAIRED_IDLE'));
+      });
+    } catch (err) {
+      uiReady = false;
+    }
+    if (uiReady) break;
+    await sleep(1000);
+  }
+  if (meta.ready) return { connected: true };
+  if (!uiReady) throw statusError('WhatsApp pairing UI did not become ready', 502);
+
+  const code = await meta.client.requestPairingCode(digits, false, 60000);
+  if (!code) throw statusError('No pairing code returned', 502);
+
+  return {
+    pairCode: String(code),
+    expiresAt: new Date(Date.now() + 3 * 60 * 1000).toISOString(),
+  };
 }
 
 function statusOf(instance) {
@@ -231,4 +292,4 @@ async function logout(instance) {
   return { ok: true };
 }
 
-module.exports = { start, getPairingQr, statusOf, sendStatus, deleteStatus, logout };
+module.exports = { start, getPairingCode, getPairingQr, statusOf, sendStatus, deleteStatus, logout };

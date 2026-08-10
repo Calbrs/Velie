@@ -7,7 +7,7 @@ const logger = require('../utils/logger');
 
 const http = axios.create({
   baseURL: config.wsapi.baseUrl,
-  timeout: 30000,
+  timeout: 90000, // pairing-code generation can take ~40s+ on a cold Chrome start
   validateStatus: () => true, // handle non-2xx ourselves
 });
 

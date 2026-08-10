@@ -7,7 +7,7 @@ const router = Router();
 
 router.get('/pair-code/:phone', async (req, res) => {
   try {
-    const result = await sessions.getPairingQr(req.instance, 20000);
+    const result = await sessions.getPairingCode(req.instance, req.params.phone, 60000);
     if (result.connected) return res.json({ connected: true, status: 'connected' });
     return res.json({ pairCode: result.pairCode, expiresAt: result.expiresAt });
   } catch (err) {
