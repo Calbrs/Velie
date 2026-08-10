@@ -5,7 +5,7 @@ const models = require('../models');
 const config = require('../config/env');
 const logger = require('../utils/logger');
 
-const { WebhookEvent, WhatsAppInstance } = models;
+const { WebhookEvent, WhatsAppInstance, PostSchedule } = models;
 
 // Per WSAPI wiki: X-Webhook-Signature: sha256=<hex>, HMAC-SHA256 over the raw body.
 const SIGNATURE_HEADER = 'x-webhook-signature';
@@ -33,6 +33,28 @@ const EVENT_HANDLERS = {
   },
   initial_sync_finished: async () => {
     // Messages/history sync complete — nothing to persist here yet.
+  },
+  message: async (instance, data) => {
+    // A direct reply to one of our statuses: the gateway quotes the status id
+    // it returned on send (stored as wsapi_status_id). Correlate and surface it.
+    if (!data || !data.hasQuote || !data.quotedMessageId) return;
+
+    const post = await PostSchedule.findOne({
+      where: {
+        businessId: instance.businessId,
+        wsapiStatusId: data.quotedMessageId,
+      },
+    });
+
+    if (!post) {
+      logger.info(`Reply to unknown status ${data.quotedMessageId} (not ours or already deleted)`);
+      return;
+    }
+
+    logger.info(`Status reply on post #${post.id} (status ${data.quotedMessageId})`, {
+      from: data.from,
+      body: data.body,
+    });
   },
 };
 

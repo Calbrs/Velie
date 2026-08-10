@@ -27,7 +27,7 @@ const WhatsAppInstance = sequelize.define(
       allowNull: false,
       defaultValue: 'disconnected',
     },
-    pairingCode: { type: DataTypes.STRING(16), allowNull: true, defaultValue: null },
+    pairingCode: { type: DataTypes.TEXT, allowNull: true, defaultValue: null },
     pairingCodeExpiresAt: { type: DataTypes.DATE, allowNull: true, defaultValue: null },
     connectedAt: { type: DataTypes.DATE, allowNull: true, defaultValue: null },
   },
