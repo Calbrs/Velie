@@ -32,9 +32,11 @@ const config = {
     ssl: read('DB_SSL', 'false') === 'true',
   },
   wsapi: {
-    // The gateway (whatsapp-web.js) now runs in-process on the same service, so
-    // the backend reaches it over the same host/port unless WSAPI_BASE_URL is set.
-    baseUrl: read('WSAPI_BASE_URL', `http://localhost:${port}`).replace(/\/$/, ''),
+    // The gateway (whatsapp-web.js) is embedded in this same Express server and
+    // served on the backend's own port, so the backend always reaches it at
+    // localhost:PORT. WSAPI_BASE_URL was only for the old standalone gateway;
+    // it is deliberately ignored here to avoid a stale dashboard override.
+    baseUrl: `http://localhost:${port}`,
     // Accept either key so the single admin key configured in the deployment
     // works for both the backend (sends X-Api-Key) and the embedded gateway
     // (validates it via requireAdmin).
