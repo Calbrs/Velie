@@ -4,6 +4,7 @@ const { Router } = require('express');
 const store = require('../store');
 const config = require('../config');
 const fs = require('fs');
+const path = require('path');
 
 const router = Router();
 
@@ -21,12 +22,20 @@ router.get('/diag', (req, res) => {
   } catch (err) {
     chromeState = { checked: true, error: err.message, cacheDir: process.env.PUPPETEER_CACHE_DIR || null };
   }
+  let heal = null;
+  try {
+    const healPath = path.join(__dirname, '..', 'data', 'chrome-heal.json');
+    if (fs.existsSync(healPath)) heal = JSON.parse(fs.readFileSync(healPath, 'utf8'));
+  } catch (err) {
+    heal = { readError: err.message };
+  }
   return res.json({
     data: {
       cacheDir: process.env.PUPPETEER_CACHE_DIR || null,
       sessionDir: config.sessionDir,
       storePath: config.storePath,
       chrome: chromeState,
+      heal,
       instances: store.getAll().length,
     },
   });
