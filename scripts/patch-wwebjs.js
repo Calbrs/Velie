@@ -4,17 +4,22 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 
-// Puppeteer 24 needs a Chrome binary to launch. On fresh hosts (Render, CI)
-// `npm install` runs puppeteer's postinstall, but to be safe we install the
-// pinned "chrome" build explicitly into the default (or configured) cache.
+// Puppeteer 24 needs a Chrome binary to launch. whatsapp-web.js bundles
+// puppeteer, but on fresh hosts (Render, CI) the Chrome download must happen
+// explicitly. We install the pinned "chrome" build into the project-local
+// `.cache/puppeteer` so it is part of the build output that gets persisted to
+// the runtime image (on Render, the default ~/.cache is build-only).
 try {
   const root = path.join(__dirname, '..');
+  const cacheDir = path.join(root, '.cache', 'puppeteer');
+  process.env.PUPPETEER_CACHE_DIR = cacheDir;
   execSync('npx puppeteer browsers install chrome', {
     cwd: root,
     stdio: 'inherit',
     timeout: 600000,
+    env: { ...process.env, PUPPETEER_CACHE_DIR: cacheDir },
   });
-  console.log('[patch] Chrome installed via puppeteer');
+  console.log('[patch] Chrome installed into', cacheDir);
 } catch (err) {
   console.error('[patch] Chrome install failed (continuing):', err.message);
 }
