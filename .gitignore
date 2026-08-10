@@ -7,3 +7,7 @@ uploads/*
 !uploads/.gitkeep
 
 .DS_Store
+
+# Embedded gateway runtime data (LocalAuth sessions, instance store, Puppeteer Chrome cache)
+gateway/data/
+.cache/
