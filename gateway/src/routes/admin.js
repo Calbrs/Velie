@@ -29,6 +29,30 @@ router.get('/diag', (req, res) => {
   } catch (err) {
     heal = { readError: err.message };
   }
+  let cacheTree = null;
+  try {
+    const root = process.env.PUPPETEER_CACHE_DIR;
+    function walk(dir, depth) {
+      if (depth > 3) return ['...'];
+      if (!fs.existsSync(dir)) return null;
+      return fs.readdirSync(dir, { withFileTypes: true }).map((e) => {
+        const full = path.join(dir, e.name);
+        const isDir = e.isDirectory();
+        let size = null;
+        if (!isDir) { try { size = fs.statSync(full).size; } catch (_) {} }
+        return isDir ? { name: e.name + '/', children: walk(full, depth + 1) } : { name: e.name, size };
+      });
+    }
+    cacheTree = walk(root, 0);
+  } catch (err) {
+    cacheTree = { error: err.message };
+  }
+  let dataDir = null;
+  try {
+    dataDir = fs.readdirSync(path.join(__dirname, '..', 'data'));
+  } catch (err) {
+    dataDir = { error: err.message };
+  }
   return res.json({
     data: {
       cacheDir: process.env.PUPPETEER_CACHE_DIR || null,
@@ -36,6 +60,8 @@ router.get('/diag', (req, res) => {
       storePath: config.storePath,
       chrome: chromeState,
       heal,
+      cacheTree,
+      dataDir,
       instances: store.getAll().length,
     },
   });
