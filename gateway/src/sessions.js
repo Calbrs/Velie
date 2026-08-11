@@ -139,6 +139,7 @@ async function start(instance, phone) {
   meta.phone = phone || meta.phone || null;
   if (meta.ready || meta.initializing) return meta;
   meta.initializing = true;
+  console.log(`[session] ${instance.id} launching (rss=${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB)`);
   meta.client.initialize().catch((err) => {
     meta.initializing = false;
     meta.lastError = err && err.message;

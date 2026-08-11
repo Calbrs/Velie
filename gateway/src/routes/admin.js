@@ -57,6 +57,14 @@ router.get('/diag', (req, res) => {
   } catch (err) {
     dataDir = { error: err.message };
   }
+  let crashes = null;
+  try {
+    const p = path.join(__dirname, '..', '..', 'data', 'crash.log');
+    if (fs.existsSync(p)) crashes = fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).slice(-20);
+  } catch (err) {
+    crashes = { error: err.message };
+  }
+  const mem = process.memoryUsage();
   return res.json({
     data: {
       cacheDir: process.env.PUPPETEER_CACHE_DIR || null,
@@ -66,6 +74,8 @@ router.get('/diag', (req, res) => {
       heal,
       cacheTree,
       dataDir,
+      crashes,
+      mem: { rss: mem.rss, heap: mem.heapUsed },
       instances: store.getAll().length,
     },
   });
