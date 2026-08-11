@@ -25,6 +25,12 @@ function writeHealLog(entry) {
   }
 }
 
+const chromeReady = (() => {
+  let resolve, reject;
+  const p = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise: p, resolve, reject };
+})();
+
 (async function selfHeal() {
   try {
     const puppeteer = require('puppeteer');
@@ -83,12 +89,6 @@ function read(name, fallback) {
   if (value === undefined || value === '') return fallback;
   return value;
 }
-
-const chromeReady = (() => {
-  let resolve, reject;
-  const p = new Promise((res, rej) => { resolve = res; reject = rej; });
-  return { promise: p, resolve, reject };
-})();
 
 async function waitForChrome(timeoutMs) {
   const deadline = Date.now() + (timeoutMs || 120000);
