@@ -64,6 +64,13 @@ router.get('/diag', (req, res) => {
   } catch (err) {
     crashes = { error: err.message };
   }
+  let memLog = null;
+  try {
+    const p = path.join(__dirname, '..', '..', 'data', 'mem.log');
+    if (fs.existsSync(p)) memLog = fs.readFileSync(p, 'utf8').split('\n').filter(Boolean).slice(-30);
+  } catch (err) {
+    memLog = { error: err.message };
+  }
   const mem = process.memoryUsage();
   return res.json({
     data: {
@@ -75,6 +82,7 @@ router.get('/diag', (req, res) => {
       cacheTree,
       dataDir,
       crashes,
+      memLog,
       mem: { rss: mem.rss, heap: mem.heapUsed },
       instances: store.getAll().length,
     },

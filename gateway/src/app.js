@@ -36,8 +36,17 @@ app.use(express.json({ limit: '15mb' }));
 setInterval(() => {
   const mem = process.memoryUsage();
   const rss = Math.round(mem.rss / 1024 / 1024);
-  if (rss > 400) console.log(`[mem] rss=${rss}MB heap=${Math.round(mem.heapUsed / 1024 / 1024)}MB`);
-}, 10000);
+  const heap = Math.round(mem.heapUsed / 1024 / 1024);
+  const line = `[${new Date().toISOString()}] rss=${rss}MB heap=${heap}MB`;
+  if (rss > 300) {
+    console.log(`[mem] rss=${rss}MB heap=${heap}MB`);
+    try {
+      const f = path.join(__dirname, '..', 'data', 'mem.log');
+      fs.mkdirSync(path.dirname(f), { recursive: true });
+      fs.appendFileSync(f, line + '\n');
+    } catch (e) { /* ignore */ }
+  }
+}, 5000);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', ts: new Date().toISOString() });
