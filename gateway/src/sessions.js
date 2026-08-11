@@ -159,10 +159,13 @@ function recreate(instance) {
   return meta;
 }
 
-async function waitForPage(client, timeoutMs) {
+async function waitForPage(meta, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (client.pupPage) return;
+    if (meta.client.pupPage) return;
+    if (meta.lastError) {
+      throw statusError('Browser failed to launch: ' + meta.lastError, 502);
+    }
     await sleep(300);
   }
   throw statusError('WhatsApp page did not initialize', 502);
@@ -202,13 +205,13 @@ async function getPairingCode(instance, phone, timeoutMs) {
   const digits = String(meta.phone || '').replace(/[^0-9]/g, '');
   if (!digits) throw statusError('phone is required (E.164)', 400);
 
-  await waitForPage(meta.client, 15000);
+  await waitForPage(meta, 90000);
 
   // requestPairingCode needs WhatsApp Web's linking UI ready AND the socket in a
   // linking state (UNPAIRED/UNPAIRED_IDLE); it throws a cryptic error otherwise.
   // Poll until then, bailing early if a stored session restores and connects.
   const page = meta.client.pupPage;
-  const deadline = Date.now() + Math.min(Number(timeoutMs) || 30000, 30000);
+  const deadline = Date.now() + Math.min(Number(timeoutMs) || 30000, 60000);
   let uiReady = false;
   while (Date.now() < deadline) {
     if (meta.ready) return { connected: true };
