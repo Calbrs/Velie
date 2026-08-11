@@ -61,7 +61,14 @@ function makeClient(instance) {
     puppeteer: {
       headless: true,
       ...(config.chromePath ? { executablePath: config.chromePath } : {}),
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu'],
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-gpu',
+        '--disable-dev-shm-usage',
+        '--disable-software-rasterizer',
+        '--no-zygote',
+      ],
     },
   });
 
