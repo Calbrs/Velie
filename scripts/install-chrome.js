@@ -83,7 +83,12 @@ async function installChrome(executablePath, cacheDir, log) {
     throw new Error('Chrome binary not found after extraction at ' + binPath);
   }
   if (process.platform !== 'win32') {
+    // unzipper does not preserve Unix exec bits, so Chrome's helper binaries
+    // (chrome, chrome_crashpad_handler, chrome-sandbox, ...) come out
+    // non-executable and Chrome aborts with "Permission denied (13)" on
+    // posix_spawn. Make everything under the folder executable.
     try {
+      chmodXTree(path.join(installDir, folder));
       fs.chmodSync(binPath, 0o755);
     } catch (e) {
       out('[install-chrome] chmod warning', e.message);
@@ -94,4 +99,12 @@ async function installChrome(executablePath, cacheDir, log) {
   return binPath;
 }
 
-module.exports = { parseExecutablePath, installChrome };
+function chmodXTree(dir) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) chmodXTree(full);
+    else fs.chmodSync(full, 0o755);
+  }
+}
+
+module.exports = { parseExecutablePath, installChrome, chmodXTree };

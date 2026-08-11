@@ -43,6 +43,16 @@ const chromeReady = (() => {
     }
     if (chromePath && fs.existsSync(chromePath)) {
       console.log('[gateway] Chrome present at', chromePath);
+      if (process.platform !== 'win32') {
+        try {
+          const { chmodXTree } = require('../../../scripts/install-chrome');
+          const folder = path.dirname(chromePath);
+          chmodXTree(folder);
+          console.log('[gateway] ensured exec bits under', folder);
+        } catch (e) {
+          console.error('[gateway] chmodXTree warning:', e.message);
+        }
+      }
       writeHealLog({ ok: true, chromePath, heal: 'none' });
       chromeReady.resolve(true);
       return;
