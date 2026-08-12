@@ -121,6 +121,7 @@ module.exports = {
   sessionDir: read('SESSION_DIR', path.join(__dirname, '..', 'data', 'sessions')),
   storePath: read('STORE_PATH', path.join(__dirname, '..', 'data', 'instances.json')),
   chromePath: read('CHROME_PATH', ''),
+  lowMemory: read('CHROME_LOW_MEMORY', '') === '1',
   chromeReady: chromeReady.promise,
   waitForChrome,
 };

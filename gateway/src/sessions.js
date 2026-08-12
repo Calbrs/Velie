@@ -68,6 +68,16 @@ function makeClient(instance) {
         '--disable-dev-shm-usage',
         '--disable-software-rasterizer',
         '--no-zygote',
+        ...(config.lowMemory ? [
+          // Low-memory guidance for 1GB Always Free instances. --single-process
+          // collapses Chromium's per-process overhead into one process (much
+          // lower RSS); not ideal for production but needed on small boxes.
+          '--single-process',
+          '--js-flags=--max-old-space-size=256',
+          '--disable-extensions',
+          '--no-first-run',
+          '--no-default-browser-check',
+        ] : []),
       ],
     },
   });
