@@ -220,6 +220,8 @@ async function getPairingCode(instance, phone, timeoutMs) {
     return getPairingQr(instance, 20000);
   }
 
+  meta.lastError = null;
+
   const digits = String(meta.phone || '').replace(/[^0-9]/g, '');
   if (!digits) throw statusError('phone is required (E.164)', 400);
 
@@ -251,6 +253,8 @@ async function getPairingCode(instance, phone, timeoutMs) {
 
   const code = await meta.client.requestPairingCode(digits, false, 60000);
   if (!code) throw statusError('No pairing code returned', 502);
+
+  meta.lastError = null;
 
   return {
     pairCode: String(code),

@@ -45,7 +45,7 @@ const chromeReady = (() => {
       console.log('[gateway] Chrome present at', chromePath);
       if (process.platform !== 'win32') {
         try {
-          const { chmodXTree } = require('../../../scripts/install-chrome');
+          const { chmodXTree } = require('../../scripts/install-chrome');
           const folder = path.dirname(chromePath);
           chmodXTree(folder);
           console.log('[gateway] ensured exec bits under', folder);
@@ -70,7 +70,7 @@ const chromeReady = (() => {
       // Use our own installer. @puppeteer/browsers' yauzl-based unpack hangs
       // mid-extraction on the Chrome 146 archive (observed locally and on
       // Render), so we download + extract with unzipper instead.
-      const { installChrome } = require('../../../scripts/install-chrome');
+      const { installChrome } = require('../../scripts/install-chrome');
       await installChrome(puppeteer.executablePath(), cacheDir, msg => console.log('[gateway]', msg));
     } catch (e) {
       downloadError = String((e && e.stack) || e);
