@@ -59,6 +59,12 @@ async function getOrCreateForBusiness(business, publicBaseUrl) {
     order: [['createdAt', 'DESC']],
   });
   if (existing) {
+    // A connected instance is already usable — return it as-is so the app
+    // routes straight to the dashboard. Only mint a fresh pairing code when
+    // the instance still needs pairing (pending/disconnected with no code).
+    if (existing.status === 'connected') {
+      return existing;
+    }
     if (!existing.pairingCode || pairingExpired(existing)) {
       return refreshPairingCode(business, existing.id);
     }
