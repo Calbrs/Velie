@@ -53,3 +53,7 @@ services:
         value: "24"
       - key: MAX_IMAGE_SIZE_MB
         value: "8"
+      - key: VIDEO_RENDER_SIMULATE
+        value: "false"
+      - key: VIDEO_RENDER_SIMULATE_DELAY_MS
+        value: "8000"

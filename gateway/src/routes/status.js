@@ -27,4 +27,13 @@ router.post('/:messageId/delete', async (req, res) => {
   }
 });
 
+router.get('/:messageId/viewers', async (req, res) => {
+  try {
+    const result = await sessions.getStatusViewers(req.instance, req.params.messageId);
+    return res.json({ data: result });
+  } catch (err) {
+    return res.status(err.status || 500).json({ message: err.message });
+  }
+});
+
 module.exports = router;

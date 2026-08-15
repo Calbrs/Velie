@@ -125,6 +125,15 @@ async function deleteStatus(instance, messageId) {
   return unwrap(res.data);
 }
 
+/** Who viewed a sent status: GET /status/{messageId}/viewers. Best-effort. */
+async function getStatusViewers(instance, messageId) {
+  const res = await http.get(`/status/${encodeURIComponent(messageId)}/viewers`, {
+    headers: instanceHeaders(instance),
+  });
+  assertOk(res);
+  return unwrap(res.data);
+}
+
 module.exports = {
   createInstance,
   requestPairingCode,
@@ -132,4 +141,5 @@ module.exports = {
   logout,
   sendStatus,
   deleteStatus,
+  getStatusViewers,
 };

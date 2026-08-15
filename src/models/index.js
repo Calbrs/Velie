@@ -7,6 +7,7 @@ const MediaAsset = require('./media_asset.model');
 const PostSchedule = require('./post_schedule.model');
 const WebhookEvent = require('./webhook_event.model');
 const Subscription = require('./subscription.model');
+const VideoRenderJob = require('./video_render_job.model');
 
 const models = {
   Business,
@@ -15,6 +16,7 @@ const models = {
   PostSchedule,
   WebhookEvent,
   Subscription,
+  VideoRenderJob,
 };
 
 for (const model of Object.values(models)) {

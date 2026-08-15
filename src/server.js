@@ -6,10 +6,12 @@ const config = require('./config/env');
 const { testConnection } = require('./config/db');
 const routes = require('./routes');
 const { uploadDir } = require('./services/upload.service');
-const { syncGatewayInstances } = require('./services/gateway_bridge');
+const { syncGatewayInstances, preWarmSessions } = require('./services/gateway_bridge');
 const { notFoundHandler, errorHandler } = require('./middleware/error.middleware');
 const { startDispatchWorker } = require('./jobs/dispatch_worker');
 const { startMediaCleanupWorker } = require('./jobs/media_cleanup_worker');
+const { startKeepAliveWorker } = require('./jobs/keep_alive_worker');
+const { startViewerRefreshWorker } = require('./jobs/viewer_refresh_worker');
 const logger = require('./utils/logger');
 
 // The Velie Gateway (whatsapp-web.js) is embedded in this service and exposed
@@ -59,9 +61,14 @@ async function bootstrap() {
 
   startDispatchWorker();
   startMediaCleanupWorker();
+  startKeepAliveWorker();
+  startViewerRefreshWorker();
 
   app.listen(config.port, () => {
     logger.info(`Velie Backend listening on port ${config.port} (${config.env})`);
+    // Eagerly restore WhatsApp sessions off the boot path so the first post
+    // after a restart doesn't sit behind a cold ~130s restore.
+    setTimeout(preWarmSessions, 1500);
   });
 }
 

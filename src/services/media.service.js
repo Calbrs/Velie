@@ -105,6 +105,7 @@ async function runCleanup() {
 
 module.exports = {
   registerUpload,
+  storageUrlFor,
   absoluteUrl,
   base64FromStorage,
   touchExpiry,

@@ -7,8 +7,16 @@ const multer = require('multer');
 const config = require('../config/env');
 const HttpError = require('../utils/HttpError');
 
-const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const ALLOWED_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+const ALLOWED_MIME = new Set([
+  'image/jpeg', 'image/png', 'image/webp',
+  'video/mp4', 'video/webm', 'video/quicktime',
+  'audio/mp4', 'audio/mpeg', 'audio/wav', 'audio/x-wav',
+]);
+const ALLOWED_EXT = new Set([
+  '.jpg', '.jpeg', '.png', '.webp',
+  '.mp4', '.webm', '.mov',
+  '.m4a', '.mp3', '.wav', '.aac',
+]);
 
 const uploadDir = path.resolve(process.cwd(), config.uploads.dir);
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -24,7 +32,7 @@ const storage = multer.diskStorage({
 
 const fileFilter = (req, file, cb) => {
   if (ALLOWED_MIME.has(file.mimetype)) return cb(null, true);
-  return cb(new HttpError(400, 'Invalid file type: picha jpg/png/webp pekee inakubaliwa'));
+  return cb(new HttpError(400, 'Invalid file type: picha (jpg/png/webp), video (mp4/webm/mov) au sauti (m4a/mp3/wav) pekee'));
 };
 
 const imageUpload = multer({

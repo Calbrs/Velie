@@ -16,6 +16,9 @@ const PostSchedule = sequelize.define(
       defaultValue: 'image',
     },
     content: { type: DataTypes.TEXT, allowNull: false },
+    /** Text-status styling (WhatsApp Web): backgroundColor hex + font style (0/1/2/3). */
+    backgroundColor: { type: DataTypes.STRING(16), allowNull: true, defaultValue: null },
+    font: { type: DataTypes.INTEGER, allowNull: true, defaultValue: null },
     scheduledTime: { type: DataTypes.DATE, allowNull: false },
     status: {
       type: DataTypes.ENUM('pending', 'sent', 'failed', 'deleted'),
@@ -24,6 +27,10 @@ const PostSchedule = sequelize.define(
     },
     /** ID returned by WSAPI after posting — used for DELETE /status/{id}. */
     wsapiStatusId: { type: DataTypes.STRING(64), allowNull: true, defaultValue: null },
+    /** Number of contacts who viewed this status (WhatsApp Status viewers). */
+    viewerCount: { type: DataTypes.INTEGER, allowNull: true, defaultValue: null },
+    /** Raw viewer list (comma-separated JIDs) cached from the gateway. */
+    viewers: { type: DataTypes.TEXT, allowNull: true, defaultValue: null },
     retries: { type: DataTypes.INTEGER.UNSIGNED, allowNull: false, defaultValue: 0 },
     lastError: { type: DataTypes.TEXT, allowNull: true, defaultValue: null },
     publishedAt: { type: DataTypes.DATE, allowNull: true, defaultValue: null },

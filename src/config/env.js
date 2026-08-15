@@ -58,10 +58,33 @@ const config = {
   },
   publicBaseUrl: read('PUBLIC_BASE_URL', 'http://localhost:4000').replace(/\/$/, ''),
   webhookSecret: read('WEBHOOK_SECRET', ''),
+  keepAlive: {
+    // Ping the public health URL on a fixed interval so free-tier hosts
+    // (Render, etc.) never idle the process to sleep. Also acts as an
+    // opportunistic reachability check for the box itself.
+    enabled: read('KEEP_ALIVE_ENABLED', 'true') === 'true',
+    cron: read('KEEP_ALIVE_CRON', '*/10 * * * *'),
+  },
+  viewerRefresh: {
+    // Keep Status viewer counts fresh while the status is live (24h window).
+    cron: read('VIEWER_REFRESH_CRON', '*/5 * * * *'),
+  },
+  videoRender: {
+    // Local video rendering with a bundled ffmpeg binary (ffmpeg-static). When
+    // VIDEO_RENDER_SIMULATE=true the job "completes" instantly using the source
+    // URL so the app flow can be exercised without encoding.
+    simulate: read('VIDEO_RENDER_SIMULATE', 'false') === 'true',
+    simulateDelayMs: readNumber('VIDEO_RENDER_SIMULATE_DELAY_MS', 8000),
+    // Optional override for the font used by drawtext overlays. Defaults to the
+    // bundled DejaVuSans.ttf under assets/fonts.
+    fontFile: read('VIDEO_RENDER_FONT_FILE', ''),
+  },
 };
 
 if (!config.dispatch.cron.trim()) config.dispatch.cron = '* * * * *';
 if (!config.cleanup.cron.trim()) config.cleanup.cron = '0 * * * *';
+if (!config.keepAlive.cron.trim()) config.keepAlive.cron = '*/10 * * * *';
+if (!config.viewerRefresh.cron.trim()) config.viewerRefresh.cron = '*/5 * * * *';
 if (config.encryptionKey && config.encryptionKey.length < 16 && config.env === 'production') {
   logger.warn('ENCRYPTION_KEY looks too short; use a strong 32-byte key in production.');
 }

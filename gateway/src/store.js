@@ -5,6 +5,17 @@ const path = require('path');
 const crypto = require('crypto');
 const config = require('./config');
 
+// whatsapp-web.js LocalAuth clientId only allows alphanumerics, _ and -.
+// Registering an ID outside that set crashes every later pair-code call, so
+// reject it at the store boundary (create and upsert) instead.
+const VALID_ID = /^[A-Za-z0-9_-]+$/;
+
+function assertValidId(id) {
+  if (!id || !VALID_ID.test(id)) {
+    throw Object.assign(new Error('Invalid id: only alphanumerics, underscores and hyphens are allowed'), { status: 400 });
+  }
+}
+
 let instances = new Map();
 let loaded = false;
 
@@ -41,6 +52,7 @@ function safeEqual(a, b) {
 
 function create({ id, apiKey, webhookUrl, signingSecret }) {
   ensureFile();
+  assertValidId(id);
   if (instances.has(id)) throw Object.assign(new Error('Instance already exists'), { status: 409 });
   const instance = {
     id,
@@ -57,6 +69,7 @@ function create({ id, apiKey, webhookUrl, signingSecret }) {
 /** Create-or-update (used to rebuild the store from the backend DB on boot). */
 function upsert({ id, apiKey, webhookUrl, signingSecret }) {
   ensureFile();
+  assertValidId(id);
   const existing = instances.get(id) || {};
   const instance = {
     id,

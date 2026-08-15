@@ -4,6 +4,7 @@ const config = require('../config/env');
 const models = require('../models');
 const { decrypt } = require('./crypto.service');
 const store = require('../../gateway/src/store');
+const sessions = require('../../gateway/src/sessions');
 const logger = require('../utils/logger');
 
 /**
@@ -32,4 +33,22 @@ async function syncGatewayInstances() {
   logger.info(`Gateway store synced from DB (${synced} instances)`);
 }
 
-module.exports = { syncGatewayInstances };
+/**
+ * Eagerly start sessions for every synced instance so the WhatsApp restore
+ * happens in the background right after boot instead of lazily on the first
+ * send. This keeps the instance "always active" and makes the first post after
+ * a restart fast instead of waiting through a cold (~60s+) WhatsApp restore.
+ * Failed restores are non-fatal: sendStatus will retry with its own wait.
+ */
+function preWarmSessions() {
+  const instances = store.getAll();
+  if (instances.length === 0) return;
+  logger.info(`Pre-warming session(s) for ${instances.length} instance(s)`);
+  for (const instance of instances) {
+    sessions.start(instance).catch((err) => {
+      logger.warn(`Session pre-warm failed for ${instance.id}: ${err.message}`);
+    });
+  }
+}
+
+module.exports = { syncGatewayInstances, preWarmSessions };

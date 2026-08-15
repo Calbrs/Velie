@@ -56,6 +56,29 @@ const EVENT_HANDLERS = {
       body: data.body,
     });
   },
+  message_revoked: async (instance, data) => {
+    // A status was deleted on the phone ("delete for everyone"). Mark the
+    // matching scheduled post as deleted so Velie knows it is gone.
+    if (!data || !data.isStatus || !data.messageId) return;
+
+    const post = await PostSchedule.findOne({
+      where: {
+        businessId: instance.businessId,
+        wsapiStatusId: data.messageId,
+        status: 'sent',
+      },
+    });
+
+    if (!post) {
+      logger.info(`Revoke of unknown status ${data.messageId} (not ours or already deleted)`);
+      return;
+    }
+
+    post.status = 'deleted';
+    post.lastError = 'deleted on phone';
+    await post.save();
+    logger.info(`post #${post.id} marked deleted (status ${data.messageId} revoked on phone)`);
+  },
 };
 
 function verifySignature(req) {

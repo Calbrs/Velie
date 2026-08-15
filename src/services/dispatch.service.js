@@ -32,7 +32,12 @@ function sleep(ms) {
  * straight off disk (uploads/<name>) and encoded.
  */
 async function buildStatusPayload(post, asset) {
-  if (post.type === 'text') return { text: post.content };
+  if (post.type === 'text') {
+    const payload = { text: post.content };
+    if (post.backgroundColor) payload.backgroundColor = post.backgroundColor;
+    if (post.font !== null && post.font !== undefined) payload.font = post.font;
+    return payload;
+  }
 
   const mimeType = (asset && asset.mimeType) || 'image/webp';
   const data = await media.base64FromStorage(asset && asset.storagePath);

@@ -45,14 +45,66 @@ if (!fs.existsSync(target)) {
 }
 
 const src = fs.readFileSync(target, 'utf8');
-const from = 'canCheckStatusRankingPosterGating()';
-const to = 'canCheckStatusRankingPosterGating\n                        ?.() ?? true';
 
-if (src.includes(to)) {
-  console.log('[patch] already applied');
-} else if (src.includes(from)) {
-  fs.writeFileSync(target, src.replace(from, to), 'utf8');
+// Patch 1: guard the removed canCheckStatusRankingPosterGating helper.
+const from1 = 'canCheckStatusRankingPosterGating()';
+const to1 = 'canCheckStatusRankingPosterGating\n                        ?.() ?? true';
+
+// Patch 2: LID-era WhatsApp Web changed sendStatusMediaMsgAction from
+// positional (msg, mediaUpdate) to a single { mediaMsgData, beforeSend,
+// funnelContext } object. whatsapp-web.js still passes positionally, so media
+// status posting crashes with "Cannot read properties of undefined (reading
+// 'id')" while text statuses (sendStatusTextMsgAction) keep working.
+const from2 = `                ](...(isMedia ? [msg, mediaUpdate] : [statusOptions]));`;
+const to2 = `                ](
+                    ...(isMedia
+                        ? [
+                              {
+                                  mediaMsgData,
+                                  beforeSend: async () => {},
+                                  funnelContext: undefined,
+                              },
+                          ]
+                        : [statusOptions]),
+                );`;
+
+const from2b = `            const mediaUpdate = (data) =>
+                window.require('WAWebMediaUpdateMsg')(data, mediaOptions);
+            const msg = new (window.require('WAWebCollections').Msg.modelClass)(`;
+const to2b = `            const mediaUpdate = (data) =>
+                window.require('WAWebMediaUpdateMsg')(data, mediaOptions);
+            const mediaMsgData = {
+                ...message,
+                from: from,
+                to: chat.id,
+                author: from,
+            };
+            const msg = new (window.require('WAWebCollections').Msg.modelClass)(`;
+
+let changed = 0;
+if (src.includes(to1)) {
+  console.log('[patch] canCheckStatusRankingPosterGating already applied');
+} else if (src.includes(from1)) {
+  const next = src.replace(from1, to1);
+  fs.writeFileSync(target, next, 'utf8');
+  changed += 1;
   console.log('[patch] applied canCheckStatusRankingPosterGating fix');
 } else {
-  console.log('[patch] pattern not found, skipping');
+  console.log('[patch] canCheckStatusRankingPosterGating pattern not found, skipping');
 }
+
+const patched = fs.readFileSync(target, 'utf8');
+if (patched.includes(to2)) {
+  console.log('[patch] status media signature already applied');
+} else if (patched.includes(from2) && patched.includes(from2b)) {
+  let next = patched.replace(from2b, to2b);
+  next = next.replace(from2, to2);
+  fs.writeFileSync(target, next, 'utf8');
+  changed += 1;
+  console.log('[patch] applied status media signature fix');
+} else {
+  console.log('[patch] status media signature pattern not found, skipping');
+}
+
+if (changed > 0) console.log('[patch] Utils.js patched');
+else console.log('[patch] no changes made');

@@ -55,6 +55,22 @@ function buildMessagePayload(msg) {
   };
 }
 
+function buildRevokePayload(message, revokedMsg) {
+  const d = message._data || {};
+  // The message passed to message_revoke_everyone lacks the original body; the
+  // second argument (when captured) holds the pre-revoke state.
+  const r = revokedMsg && revokedMsg._data ? revokedMsg._data : {};
+  return {
+    messageId: (message.id && message.id.id) || d.id || null,
+    from: d.from || null,
+    fromMe: !!(d.fromMe || (message.fromMe === true)),
+    body: r.body || '',
+    type: r.type || d.type || null,
+    timestamp: d.timestamp || null,
+    isStatus: (d.from === 'status@broadcast') || (r.chatId === 'status@broadcast'),
+  };
+}
+
 function makeClient(instance) {
   const client = new Client({
     authStrategy: new LocalAuth({ clientId: instance.id, dataPath: config.sessionDir }),
@@ -91,6 +107,7 @@ function makeClient(instance) {
     qrAt: 0,
     lastError: null,
     reconnectTimer: null,
+    watchdogTimer: null,
   };
 
   client.on('qr', (qr) => {
@@ -103,6 +120,7 @@ function makeClient(instance) {
     meta.initializing = false;
     meta.qr = null;
     meta.lastError = null;
+    startWatchdog(meta);
     if (meta.reconnectTimer) {
       clearTimeout(meta.reconnectTimer);
       meta.reconnectTimer = null;
@@ -113,12 +131,14 @@ function makeClient(instance) {
 
   client.on('auth_failure', (message) => {
     meta.lastError = message;
+    stopWatchdog(meta);
     webhook.fire(instance, 'login_error', { message: String(message) });
   });
 
   client.on('disconnected', (reason) => {
     meta.ready = false;
     meta.qr = null;
+    stopWatchdog(meta);
     console.log(`[session] ${instance.id} disconnected: ${reason}`);
     if (PERMANENT_REASONS.includes(reason)) {
       webhook.fire(instance, 'logged_out', { reason });
@@ -132,6 +152,10 @@ function makeClient(instance) {
 
   client.on('message', (msg) => {
     webhook.fire(instance, 'message', buildMessagePayload(msg));
+  });
+
+  client.on('message_revoke_everyone', (message, revokedMsg) => {
+    webhook.fire(instance, 'message_revoked', buildRevokePayload(message, revokedMsg));
   });
 
   return meta;
@@ -157,9 +181,44 @@ async function start(instance, phone) {
   return meta;
 }
 
+// WhatsApp Web's in-page socket reports disconnects (WAState), but that event
+// never fires when the Chromium PROCESS itself is killed (e.g. OOM on a 1GB
+// box) — the meta stays `ready: true` and every evaluate() hits a detached
+// frame ("Attempted to use detached Frame"). Probe the page periodically and
+// recreate the session if the frame is unusable, so sends recover automatically.
+function startWatchdog(meta) {
+  if (meta.watchdogTimer) return;
+  meta.watchdogTimer = setInterval(async () => {
+    if (!meta.ready) return;
+    const page = meta.client && meta.client.pupPage;
+    if (!page) return;
+    // A detached frame still reports the *page* alive but evaluate() throws.
+    // Guard the probe itself in case the page is mid-navigation.
+    let ok = false;
+    try {
+      await page.evaluate(() => 1);
+      ok = true;
+    } catch (e) {
+      ok = false;
+    }
+    if (!ok) {
+      console.log(`[session] ${meta.instance.id} browser page unusable, recreating (rss=${Math.round(process.memoryUsage().rss / 1024 / 1024)}MB)`);
+      recreate(meta.instance);
+    }
+  }, 15000);
+}
+
+function stopWatchdog(meta) {
+  if (meta.watchdogTimer) {
+    clearInterval(meta.watchdogTimer);
+    meta.watchdogTimer = null;
+  }
+}
+
 function recreate(instance) {
   const old = sessions.get(instance.id);
   if (old && old.client) {
+    stopWatchdog(old);
     try {
       old.client.destroy();
     } catch (err) {
@@ -274,7 +333,43 @@ function statusOf(instance) {
 
 async function sendStatus(instance, type, payload) {
   const meta = await start(instance);
-  if (!meta.ready) throw statusError('WhatsApp instance is not connected', 409);
+  if (!meta.ready) {
+    // A cold start (or recovery after Chrome died) needs to restore the saved
+    // WhatsApp session before we can send. Wait here so the caller doesn't get
+    // a hard 409 mid-restore.
+    const deadline = Date.now() + 60000;
+    while (Date.now() < deadline) {
+      if (meta.ready) break;
+      if (meta.lastError) break;
+      await sleep(300);
+    }
+    if (!meta.ready) {
+      throw statusError('WhatsApp instance is not connected', 409);
+    }
+  }
+  const p = payload || {};
+
+  try {
+    return await doSend(meta, type, p);
+  } catch (err) {
+    // Detached frame = the Chromium page was reloaded/killed under us while the
+    // gateway still thought we were ready. Recreate the session once and retry
+    // rather than surfacing a confusing 500.
+    const msg = err && err.message;
+    if (msg && /detached Frame/i.test(String(msg))) {
+      console.log(`[session] ${instance.id} send hit detached frame, recreating and retrying`);
+      recreate(instance);
+      const retry = await start(instance, null);
+      // A recreated session needs to become ready again.
+      const deadline = Date.now() + 20000;
+      while (Date.now() < deadline && !retry.ready) await sleep(300);
+      if (retry.ready) return doSend(retry, type, p);
+    }
+    throw err;
+  }
+}
+
+async function doSend(meta, type, payload) {
   const p = payload || {};
   let messageId;
 
@@ -307,10 +402,96 @@ async function deleteStatus(instance, messageId) {
   return { deleted: true, messageId };
 }
 
+/**
+ * Best-effort reader for the list of WhatsApp contacts who viewed one of our
+ * status posts. whatsapp-web.js has no public API for this, so we dig into the
+ * WhatsApp Web page's internal modules:
+ *   - `WAWebCollections.Seen` holds per-message "seenBy" WID lists for status
+ *     messages (messageId here is the short stanza id from a successful send).
+ *   - `WAWebCollections.Status.getMyStatus()` models also carry viewer info via
+ *     `seenBy` on their msgs.
+ * Returns { viewers: [...] } or { viewers: [], error } — never throws so callers
+ * can treat missing viewer data as "not yet available".
+ */
+async function getStatusViewers(instance, messageId) {
+  const meta = sessions.get(instance.id);
+  if (!meta || !meta.ready) throw statusError('WhatsApp instance is not connected', 409);
+  const page = meta.client && meta.client.pupPage;
+  if (!page) throw statusError('WhatsApp page not available', 409);
+
+  try {
+    const result = await page.evaluate(async (stanzaId) => {
+      const collections = window.require('WAWebCollections');
+      const collector = { read: [] };
+
+      // We know the short stanza id the send returned (e.g. 3EB0EB35...).
+      // The Status collection keeps my own status messages; match by the message
+      // id, the serialized id, or as a fallback the most recent fromMe status.
+      const getCandidates = () => {
+        const out = [];
+        const all = collections.Status && collections.Status.getModelsArray
+          ? collections.Status.getModelsArray()
+          : [];
+        for (const s of all) {
+          const arr = (s && (s.statusMsgs && (s.statusMsgs.models || s.statusMsgs))) || [];
+          for (const m of arr) {
+            if (m && m.id && m.id.fromMe) out.push(m);
+          }
+        }
+        return out;
+      };
+
+      let target = null;
+      for (const m of getCandidates()) {
+        const d = m.id;
+        const short = d.id;
+        const serialized = d._serialized;
+        if (short === stanzaId || serialized === stanzaId || (serialized && serialized.startsWith(stanzaId))) {
+          target = m;
+          break;
+        }
+      }
+      if (!target && getCandidates().length) {
+        // Fall back to the most recent of my status messages.
+        target = getCandidates().sort((a, b) => (b.t || 0) - (a.t || 0))[0];
+      }
+
+      if (!target) {
+        return { viewers: [], error: 'My status message not found in page' };
+      }
+
+      try {
+        const info = await window.require('WAWebApiMessageInfoStore').queryMsgInfo(target.id);
+        const read = (info && (Array.isArray(info.read) ? info.read : (info.read ? info.read.models || info.read : []))) || [];
+        collector.read = read
+          .map((r) => {
+            const id = r && (r.id && (r.id._serialized || r.id.user || r.id.id)) || r;
+            return String(id);
+          })
+          .filter(Boolean);
+        return { viewers: collector.read };
+      } catch (e) {
+        return { viewers: [], error: 'queryMsgInfo failed: ' + e.message };
+      }
+    }, messageId);
+
+    return {
+      viewers: result.viewers || [],
+      error: result.error || null,
+    };
+  } catch (err) {
+    if (err && /detached Frame/i.test(String(err.message))) {
+      recreate(instance);
+    }
+    return { viewers: [], error: err && err.message };
+  }
+}
+
 async function logout(instance) {
   const meta = sessions.get(instance.id);
   if (meta && meta.ready) {
     try {
+      stopWatchdog(meta);
       await meta.client.logout();
     } catch (err) {
       /* ignore */
@@ -324,4 +505,4 @@ async function logout(instance) {
   return { ok: true };
 }
 
-module.exports = { start, getPairingCode, getPairingQr, statusOf, sendStatus, deleteStatus, logout };
+module.exports = { start, getPairingCode, getPairingQr, statusOf, sendStatus, deleteStatus, getStatusViewers, logout };
